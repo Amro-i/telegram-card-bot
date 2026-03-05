@@ -489,15 +489,19 @@ DIV = "\n\n--------------------\n\n"
 
 
 def msg_high_load(ar_only: bool) -> str:
+    # ✅ Unified: Arabic first, then English
     if ar_only:
-        return "الضغط عالي الآن. حاول مرة أخرى بعد قليل."
-    return "High load right now. Please try again in a moment." + DIV + "الضغط عالي الآن. حاول بعد قليل."
+        return "الضغط عالي الآن. الرجاء المحاولة مرة أخرى بعد قليل."
+    return "الضغط عالي الآن. الرجاء المحاولة مرة أخرى بعد قليل." + DIV + "High load right now. Please try again in a moment."
 
 
 def msg_rate_limited(ar_only: bool, seconds: float) -> str:
+    # ✅ Unified: Arabic first, then English
     if ar_only:
         return f"تم استقبال طلب توليد قبل قليل. الرجاء الانتظار {int(seconds)} ثانية ثم حاول مرة أخرى."
-    return f"Please wait {int(seconds)} seconds then try again." + DIV + "تم استقبال طلب توليد قبل قليل. حاول بعد قليل."
+    ar = f"تم استقبال طلب توليد قبل قليل. الرجاء الانتظار {int(seconds)} ثانية ثم حاول مرة أخرى."
+    en = f"Please wait {int(seconds)} seconds then try again."
+    return ar + DIV + en
 
 
 BRANDING: Dict[str, Dict[str, str]] = {
@@ -808,11 +812,13 @@ def bump_seq(s: Session):
 # ---------------------------
 # Queue worker + inflight dedupe
 # ---------------------------
-job_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)  # ✅ bounded queue
+# ✅ 1) bounded queue (closes at MAX_QUEUE_SIZE)
+job_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
+
 _inflight_lock = asyncio.Lock()
 _inflight: set = set()
 
-# ✅ generation semaphore (global)
+# ✅ 3) performance: global generation semaphore
 GEN_SEM = asyncio.Semaphore(max(1, GEN_CONCURRENCY))
 
 
@@ -874,7 +880,7 @@ async def process_job(job: Job):
             return
 
     try:
-        # ✅ Global generation concurrency + run blocking google/requests work in a thread
+        # ✅ 3) performance: run blocking work in thread + limit concurrent gens
         async with GEN_SEM:
             png_bytes = await asyncio.to_thread(
                 generate_card_png,
