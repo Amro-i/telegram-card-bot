@@ -30,11 +30,11 @@ log = logging.getLogger("telegram-multi-card-bot")
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))
 EXPORT_TIMEOUT = int(os.getenv("EXPORT_TIMEOUT", "45"))
 MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "200"))
-WORKER_COUNT = int(os.getenv("WORKER_COUNT", "3"))
+WORKER_COUNT = int(os.getenv("WORKER_COUNT", "1"))  # ✅ default changed to 1
 
 # IMPORTANT: rate limit ONLY on generation
 RATE_LIMIT_SECONDS = float(os.getenv("RATE_LIMIT_SECONDS", "10"))
-PROGRESS_PING_SECONDS = float(os.getenv("PROGRESS_PING_SECONDS", "8"))
+PROGRESS_PING_SECONDS = float(os.getenv("PROGRESS_PING_SECONDS", "30"))  # ✅ default changed to 30
 
 RETRY_MAX_ATTEMPTS = int(os.getenv("RETRY_MAX_ATTEMPTS", "5"))
 RETRY_BASE_DELAY = float(os.getenv("RETRY_BASE_DELAY", "0.7"))
@@ -45,6 +45,9 @@ FP_DEDUP_SECONDS = int(os.getenv("FP_DEDUP_SECONDS", "60"))
 TG_API = "https://api.telegram.org/bot{}/{}"
 
 GEN_COMMANDS = {"GEN", "CONFIRM_GEN"}
+
+# ✅ Global generation concurrency (default 1)
+GEN_CONCURRENCY = int(os.getenv("GEN_CONCURRENCY", "1"))
 
 # ---------------------------
 # Google (shared)
@@ -805,9 +808,12 @@ def bump_seq(s: Session):
 # ---------------------------
 # Queue worker + inflight dedupe
 # ---------------------------
-job_queue: asyncio.Queue = asyncio.Queue()
+job_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)  # ✅ bounded queue
 _inflight_lock = asyncio.Lock()
 _inflight: set = set()
+
+# ✅ generation semaphore (global)
+GEN_SEM = asyncio.Semaphore(max(1, GEN_CONCURRENCY))
 
 
 @dataclass
@@ -868,12 +874,15 @@ async def process_job(job: Job):
             return
 
     try:
-        png_bytes = generate_card_png(
-            template_id=job.template_id,
-            name_ar=job.name_ar,
-            name_en=job.name_en,
-            lang_mode=bot["lang_mode"],
-        )
+        # ✅ Global generation concurrency + run blocking google/requests work in a thread
+        async with GEN_SEM:
+            png_bytes = await asyncio.to_thread(
+                generate_card_png,
+                template_id=job.template_id,
+                name_ar=job.name_ar,
+                name_en=job.name_en,
+                lang_mode=bot["lang_mode"],
+            )
 
         async with s.lock:
             if job.seq != s.seq:
@@ -1254,21 +1263,27 @@ async def handle_webhook(req: Request, bot_key: str):
                 asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, s.seq))
 
                 # AR_EN always SQUARE and design 1
-                await job_queue.put(
-                    Job(
-                        bot_key=bot_key,
-                        chat_id=s.chat_id,
-                        user_id=s.user_id,
-                        username=s.username,
-                        name_ar=s.name_ar,
-                        name_en=s.name_en,
-                        size_key="SQUARE",
-                        design_number=1,
-                        template_id=pick_template_id(bot, "SQUARE", 1),
-                        requested_at=time.time(),
-                        seq=s.seq,
+                try:
+                    job_queue.put_nowait(
+                        Job(
+                            bot_key=bot_key,
+                            chat_id=s.chat_id,
+                            user_id=s.user_id,
+                            username=s.username,
+                            name_ar=s.name_ar,
+                            name_en=s.name_en,
+                            size_key="SQUARE",
+                            design_number=1,
+                            template_id=pick_template_id(bot, "SQUARE", 1),
+                            requested_at=time.time(),
+                            seq=s.seq,
+                        )
                     )
-                )
+                except asyncio.QueueFull:
+                    tg_send_message(bot_token, s.chat_id, msg_high_load(ar_only=False), ar_kb_start_again())
+                    reset_session(s, keep_last_name=True)
+                    return {"ok": True}
+
                 return {"ok": True}
 
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
@@ -1380,21 +1395,27 @@ async def handle_webhook(req: Request, bot_key: str):
                 asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, s.seq))
 
                 template_id = pick_template_id(bot, s.chosen_size or "SQUARE", s.chosen_design or 1)
-                await job_queue.put(
-                    Job(
-                        bot_key=bot_key,
-                        chat_id=s.chat_id,
-                        user_id=s.user_id,
-                        username=s.username,
-                        name_ar=s.name_ar,
-                        name_en="",
-                        size_key=s.chosen_size or "SQUARE",
-                        design_number=int(s.chosen_design or 1),
-                        template_id=template_id,
-                        requested_at=time.time(),
-                        seq=s.seq,
+                try:
+                    job_queue.put_nowait(
+                        Job(
+                            bot_key=bot_key,
+                            chat_id=s.chat_id,
+                            user_id=s.user_id,
+                            username=s.username,
+                            name_ar=s.name_ar,
+                            name_en="",
+                            size_key=s.chosen_size or "SQUARE",
+                            design_number=int(s.chosen_design or 1),
+                            template_id=template_id,
+                            requested_at=time.time(),
+                            seq=s.seq,
+                        )
                     )
-                )
+                except asyncio.QueueFull:
+                    tg_send_message(bot_token, s.chat_id, msg_high_load(ar_only=True), hz_kb_start_again())
+                    reset_session(s, keep_last_name=True)
+                    return {"ok": True}
+
                 return {"ok": True}
 
             if not s.chosen_size:
