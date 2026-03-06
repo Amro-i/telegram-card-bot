@@ -30,11 +30,11 @@ log = logging.getLogger("telegram-multi-card-bot")
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))
 EXPORT_TIMEOUT = int(os.getenv("EXPORT_TIMEOUT", "45"))
 MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "200"))
-WORKER_COUNT = int(os.getenv("WORKER_COUNT", "1"))  # default changed to 1
+WORKER_COUNT = int(os.getenv("WORKER_COUNT", "1"))
 
 # IMPORTANT: rate limit ONLY on generation
 RATE_LIMIT_SECONDS = float(os.getenv("RATE_LIMIT_SECONDS", "10"))
-PROGRESS_PING_SECONDS = float(os.getenv("PROGRESS_PING_SECONDS", "30"))  # default changed to 30
+PROGRESS_PING_SECONDS = float(os.getenv("PROGRESS_PING_SECONDS", "30"))
 
 RETRY_MAX_ATTEMPTS = int(os.getenv("RETRY_MAX_ATTEMPTS", "5"))
 RETRY_BASE_DELAY = float(os.getenv("RETRY_BASE_DELAY", "0.7"))
@@ -43,19 +43,19 @@ RETRY_MAX_DELAY = float(os.getenv("RETRY_MAX_DELAY", "8.0"))
 FP_DEDUP_SECONDS = int(os.getenv("FP_DEDUP_SECONDS", "60"))
 
 TG_API = "https://api.telegram.org/bot{}/{}"
-
 GEN_COMMANDS = {"GEN", "CONFIRM_GEN"}
 
-# Global generation concurrency (default 1)
+# Global generation concurrency
 GEN_CONCURRENCY = int(os.getenv("GEN_CONCURRENCY", "1"))
 
-# Instance name for tracking (Render project/service name)
+# Instance name for tracking
 INSTANCE_NAME = os.getenv("INSTANCE_NAME", "local").strip() or "local"
 
-# NEW: choose which bots are active on this server
-# Example:
-# ACTIVE_BOTS=alarabia,kounuz_alward
+# Which bots are active on this server
 ACTIVE_BOTS = os.getenv("ACTIVE_BOTS", "").strip()
+
+# NEW: temp folder where copied presentations are created
+OUTPUT_FOLDER_ID = os.getenv("OUTPUT_FOLDER_ID", "").strip()
 
 # ---------------------------
 # Google (shared)
@@ -192,10 +192,6 @@ def load_bots_config() -> Dict[str, Dict[str, Any]]:
 
 
 def filter_active_bots(all_bots: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """
-    Filters bots based on ACTIVE_BOTS env variable.
-    If ACTIVE_BOTS is empty, all bots remain active.
-    """
     if not ACTIVE_BOTS:
         return all_bots
 
@@ -303,7 +299,6 @@ def now_ts_riyadh() -> str:
 
 
 def safe_sheet_append_row(values: List[str]) -> None:
-    """Never break the bot if sheet write fails."""
     try:
         sheet_append_row(values)
     except Exception as e:
@@ -800,8 +795,6 @@ class Session:
     last_gen_ts: float = 0
     creating_msg_id: int = 0
     recent_fps: Dict[str, float] = field(default_factory=dict)
-
-    # tracking
     user_id: str = ""
     username: str = ""
 
@@ -1003,12 +996,17 @@ def export_png(pres_id: str, slide_object_id: str, creds) -> bytes:
 def generate_card_png(template_id: str, name_ar: str, name_en: str, lang_mode: str) -> bytes:
     drive, slides, sheets, creds = build_clients()
     pres_id = None
+
     try:
+        copy_body = {"name": f"tg_card_{int(time.time())}"}
+        if OUTPUT_FOLDER_ID:
+            copy_body["parents"] = [OUTPUT_FOLDER_ID]
+
         copied = google_execute_with_retry(
             lambda: drive.files()
             .copy(
                 fileId=template_id,
-                body={"name": f"tg_card_{int(time.time())}"},
+                body=copy_body,
                 supportsAllDrives=True,
             )
             .execute(),
@@ -1118,7 +1116,6 @@ def pick_template_id(bot: Dict[str, Any], size_key: str, design_idx_1based: int)
 # Core handler
 # ---------------------------
 async def handle_webhook(req: Request, bot_key: str):
-    # NEW: ignore requests for bots not active on this server
     if bot_key not in BOTS:
         return {"ok": True, "message": f"bot '{bot_key}' is not active on this server"}
 
@@ -1493,7 +1490,7 @@ async def startup():
     for i in range(max(1, WORKER_COUNT)):
         asyncio.create_task(worker_loop(i + 1))
     log.info(
-        "App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s, instance=%s)",
+        "App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s, instance=%s, output_folder=%s)",
         WORKER_COUNT,
         MAX_QUEUE_SIZE,
         RATE_LIMIT_SECONDS,
@@ -1501,6 +1498,7 @@ async def startup():
         "on" if SHEET_ID else "off",
         SHEET_TAB,
         INSTANCE_NAME,
+        OUTPUT_FOLDER_ID or "not-set",
     )
     log.info("Active bots on this instance: %s", ", ".join(BOTS.keys()))
 
@@ -1511,6 +1509,7 @@ def home():
         "status": "ok",
         "instance": INSTANCE_NAME,
         "active_bots": list(BOTS.keys()),
+        "output_folder_set": bool(OUTPUT_FOLDER_ID),
     }
 
 
