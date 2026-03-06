@@ -30,11 +30,11 @@ log = logging.getLogger("telegram-multi-card-bot")
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))
 EXPORT_TIMEOUT = int(os.getenv("EXPORT_TIMEOUT", "45"))
 MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "200"))
-WORKER_COUNT = int(os.getenv("WORKER_COUNT", "1"))  # ✅ default changed to 1
+WORKER_COUNT = int(os.getenv("WORKER_COUNT", "1"))  # default changed to 1
 
 # IMPORTANT: rate limit ONLY on generation
 RATE_LIMIT_SECONDS = float(os.getenv("RATE_LIMIT_SECONDS", "10"))
-PROGRESS_PING_SECONDS = float(os.getenv("PROGRESS_PING_SECONDS", "30"))  # ✅ default changed to 30
+PROGRESS_PING_SECONDS = float(os.getenv("PROGRESS_PING_SECONDS", "30"))  # default changed to 30
 
 RETRY_MAX_ATTEMPTS = int(os.getenv("RETRY_MAX_ATTEMPTS", "5"))
 RETRY_BASE_DELAY = float(os.getenv("RETRY_BASE_DELAY", "0.7"))
@@ -46,11 +46,16 @@ TG_API = "https://api.telegram.org/bot{}/{}"
 
 GEN_COMMANDS = {"GEN", "CONFIRM_GEN"}
 
-# ✅ Global generation concurrency (default 1)
+# Global generation concurrency (default 1)
 GEN_CONCURRENCY = int(os.getenv("GEN_CONCURRENCY", "1"))
 
-# ✅ NEW: Instance name for tracking (Render project/service name)
+# Instance name for tracking (Render project/service name)
 INSTANCE_NAME = os.getenv("INSTANCE_NAME", "local").strip() or "local"
+
+# NEW: choose which bots are active on this server
+# Example:
+# ACTIVE_BOTS=alarabia,kounuz_alward
+ACTIVE_BOTS = os.getenv("ACTIVE_BOTS", "").strip()
 
 # ---------------------------
 # Google (shared)
@@ -186,7 +191,30 @@ def load_bots_config() -> Dict[str, Dict[str, Any]]:
         return _default_bots()
 
 
+def filter_active_bots(all_bots: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Filters bots based on ACTIVE_BOTS env variable.
+    If ACTIVE_BOTS is empty, all bots remain active.
+    """
+    if not ACTIVE_BOTS:
+        return all_bots
+
+    names = [x.strip() for x in ACTIVE_BOTS.split(",") if x.strip()]
+    filtered = {}
+
+    for name in names:
+        if name not in all_bots:
+            raise RuntimeError(f"ACTIVE_BOTS contains unknown bot: {name}")
+        filtered[name] = all_bots[name]
+
+    if not filtered:
+        raise RuntimeError("No active bots selected in ACTIVE_BOTS")
+
+    return filtered
+
+
 BOTS: Dict[str, Dict[str, Any]] = load_bots_config()
+BOTS = filter_active_bots(BOTS)
 
 app = FastAPI()
 
@@ -492,14 +520,12 @@ DIV = "\n\n--------------------\n\n"
 
 
 def msg_high_load(ar_only: bool) -> str:
-    # ✅ Unified: Arabic first, then English
     if ar_only:
         return "الضغط عالي الآن. الرجاء المحاولة مرة أخرى بعد قليل."
     return "الضغط عالي الآن. الرجاء المحاولة مرة أخرى بعد قليل." + DIV + "High load right now. Please try again in a moment."
 
 
 def msg_rate_limited(ar_only: bool, seconds: float) -> str:
-    # ✅ Unified: Arabic first, then English
     if ar_only:
         return f"تم استقبال طلب توليد قبل قليل. الرجاء الانتظار {int(seconds)} ثانية ثم حاول مرة أخرى."
     ar = f"تم استقبال طلب توليد قبل قليل. الرجاء الانتظار {int(seconds)} ثانية ثم حاول مرة أخرى."
@@ -634,7 +660,6 @@ def ar_kb_after_ready() -> dict:
     }
 
 
-# Arabic-only
 def hz_msg_welcome(bot_key: str) -> str:
     br = get_branding(bot_key)
     return br.get("welcome_ar", "مرحباً بك")
@@ -880,7 +905,6 @@ async def process_job(job: Job):
             log.info("Skip stale job for %s", job.chat_id)
             return
 
-    # ✅ NEW: calculate queue wait (when worker starts)
     started_processing_at = time.time()
     queue_wait_sec = max(0.0, started_processing_at - float(job.requested_at or started_processing_at))
 
@@ -888,7 +912,6 @@ async def process_job(job: Job):
     gen_started_at = None
 
     try:
-        # ✅ 3) performance: run blocking work in thread + limit concurrent gens
         async with GEN_SEM:
             gen_started_at = time.time()
             png_bytes = await asyncio.to_thread(
@@ -912,22 +935,21 @@ async def process_job(job: Job):
         else:
             tg_send_message(bot_token, job.chat_id, hz_msg_ready(), hz_kb_after_ready())
 
-        # ✅ Log to Sheet (SUCCESS) + NEW columns
         safe_sheet_append_row([
-            now_ts_riyadh(),                 # Timestamp
-            job.bot_key,                     # Bot
-            "SUCCESS",                       # Status
-            job.name_ar or "",               # Ar Name
-            job.name_en or "",               # En Name
-            job.chat_id or "",               # Chat ID
-            job.user_id or "",               # User ID
-            job.username or "",              # Username
-            size_label_ar(job.size_key),     # Size
-            str(job.design_number or 1),     # Design
-            "",                              # Error
-            INSTANCE_NAME,                   # INSTANCE_NAME
-            f"{queue_wait_sec:.2f}",         # QUEUE_WAIT_SEC
-            f"{gen_sec:.2f}",                # GEN_SEC
+            now_ts_riyadh(),
+            job.bot_key,
+            "SUCCESS",
+            job.name_ar or "",
+            job.name_en or "",
+            job.chat_id or "",
+            job.user_id or "",
+            job.username or "",
+            size_label_ar(job.size_key),
+            str(job.design_number or 1),
+            "",
+            INSTANCE_NAME,
+            f"{queue_wait_sec:.2f}",
+            f"{gen_sec:.2f}",
         ])
 
         async with s.lock:
@@ -935,7 +957,6 @@ async def process_job(job: Job):
             reset_session(s, keep_last_name=True)
 
     except Exception as e:
-        # If failure happened during generation and we didn't record gen_sec
         if gen_started_at is not None and gen_sec <= 0.0:
             gen_sec = max(0.0, time.time() - gen_started_at)
 
@@ -944,7 +965,6 @@ async def process_job(job: Job):
         else:
             tg_send_message(bot_token, job.chat_id, hz_msg_error(str(e)), hz_kb_start_again())
 
-        # ✅ Log to Sheet (ERROR) + NEW columns
         safe_sheet_append_row([
             now_ts_riyadh(),
             job.bot_key,
@@ -1098,6 +1118,10 @@ def pick_template_id(bot: Dict[str, Any], size_key: str, design_idx_1based: int)
 # Core handler
 # ---------------------------
 async def handle_webhook(req: Request, bot_key: str):
+    # NEW: ignore requests for bots not active on this server
+    if bot_key not in BOTS:
+        return {"ok": True, "message": f"bot '{bot_key}' is not active on this server"}
+
     bot = BOTS[bot_key]
     bot_token = bot["token"]
     lang_mode = bot.get("lang_mode")
@@ -1113,7 +1137,6 @@ async def handle_webhook(req: Request, bot_key: str):
 
     s = get_session(bot_key, chat_id)
 
-    # store user info for tracking
     async with s.lock:
         if user_id:
             s.user_id = user_id
@@ -1286,7 +1309,6 @@ async def handle_webhook(req: Request, bot_key: str):
 
                 asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, s.seq))
 
-                # AR_EN always SQUARE and design 1
                 try:
                     job_queue.put_nowait(
                         Job(
@@ -1480,11 +1502,16 @@ async def startup():
         SHEET_TAB,
         INSTANCE_NAME,
     )
+    log.info("Active bots on this instance: %s", ", ".join(BOTS.keys()))
 
 
 @app.get("/")
 def home():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "instance": INSTANCE_NAME,
+        "active_bots": list(BOTS.keys()),
+    }
 
 
 @app.post("/webhook/alarabia")
