@@ -49,6 +49,9 @@ GEN_COMMANDS = {"GEN", "CONFIRM_GEN"}
 # ✅ Global generation concurrency (default 1)
 GEN_CONCURRENCY = int(os.getenv("GEN_CONCURRENCY", "1"))
 
+# ✅ NEW: Instance name for tracking (Render project/service name)
+INSTANCE_NAME = os.getenv("INSTANCE_NAME", "local").strip() or "local"
+
 # ---------------------------
 # Google (shared)
 # ---------------------------
@@ -812,13 +815,11 @@ def bump_seq(s: Session):
 # ---------------------------
 # Queue worker + inflight dedupe
 # ---------------------------
-# ✅ 1) bounded queue (closes at MAX_QUEUE_SIZE)
 job_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
 
 _inflight_lock = asyncio.Lock()
 _inflight: set = set()
 
-# ✅ 3) performance: global generation semaphore
 GEN_SEM = asyncio.Semaphore(max(1, GEN_CONCURRENCY))
 
 
@@ -879,9 +880,17 @@ async def process_job(job: Job):
             log.info("Skip stale job for %s", job.chat_id)
             return
 
+    # ✅ NEW: calculate queue wait (when worker starts)
+    started_processing_at = time.time()
+    queue_wait_sec = max(0.0, started_processing_at - float(job.requested_at or started_processing_at))
+
+    gen_sec = 0.0
+    gen_started_at = None
+
     try:
         # ✅ 3) performance: run blocking work in thread + limit concurrent gens
         async with GEN_SEM:
+            gen_started_at = time.time()
             png_bytes = await asyncio.to_thread(
                 generate_card_png,
                 template_id=job.template_id,
@@ -889,34 +898,36 @@ async def process_job(job: Job):
                 name_en=job.name_en,
                 lang_mode=bot["lang_mode"],
             )
+            gen_sec = max(0.0, time.time() - gen_started_at)
 
         async with s.lock:
             if job.seq != s.seq:
                 log.info("Skip stale result for %s", job.chat_id)
                 return
 
-        # ✅ Send photo alone
         tg_send_photo(bot_token, job.chat_id, png_bytes, caption="", reply_markup=None)
 
-        # ✅ Then success message + buttons
         if bot["lang_mode"] == "AR_EN":
             tg_send_message(bot_token, job.chat_id, ar_msg_ready(), ar_kb_after_ready())
         else:
             tg_send_message(bot_token, job.chat_id, hz_msg_ready(), hz_kb_after_ready())
 
-        # ✅ Log to Sheet (SUCCESS)
+        # ✅ Log to Sheet (SUCCESS) + NEW columns
         safe_sheet_append_row([
-            now_ts_riyadh(),                # Timestamp
-            job.bot_key,                    # Bot
-            "SUCCESS",                      # Status
-            job.name_ar or "",              # Ar Name
-            job.name_en or "",              # En Name
-            job.chat_id or "",              # Chat ID
-            job.user_id or "",              # User ID
-            job.username or "",             # Username
-            size_label_ar(job.size_key),    # Size
-            str(job.design_number or 1),    # Design
-            "",                             # Error
+            now_ts_riyadh(),                 # Timestamp
+            job.bot_key,                     # Bot
+            "SUCCESS",                       # Status
+            job.name_ar or "",               # Ar Name
+            job.name_en or "",               # En Name
+            job.chat_id or "",               # Chat ID
+            job.user_id or "",               # User ID
+            job.username or "",              # Username
+            size_label_ar(job.size_key),     # Size
+            str(job.design_number or 1),     # Design
+            "",                              # Error
+            INSTANCE_NAME,                   # INSTANCE_NAME
+            f"{queue_wait_sec:.2f}",         # QUEUE_WAIT_SEC
+            f"{gen_sec:.2f}",                # GEN_SEC
         ])
 
         async with s.lock:
@@ -924,12 +935,16 @@ async def process_job(job: Job):
             reset_session(s, keep_last_name=True)
 
     except Exception as e:
+        # If failure happened during generation and we didn't record gen_sec
+        if gen_started_at is not None and gen_sec <= 0.0:
+            gen_sec = max(0.0, time.time() - gen_started_at)
+
         if bot["lang_mode"] == "AR_EN":
             tg_send_message(bot_token, job.chat_id, ar_msg_error(str(e)), ar_kb_start_again())
         else:
             tg_send_message(bot_token, job.chat_id, hz_msg_error(str(e)), hz_kb_start_again())
 
-        # ✅ Log to Sheet (ERROR)
+        # ✅ Log to Sheet (ERROR) + NEW columns
         safe_sheet_append_row([
             now_ts_riyadh(),
             job.bot_key,
@@ -942,6 +957,9 @@ async def process_job(job: Job):
             size_label_ar(job.size_key),
             str(job.design_number or 1),
             str(e)[:400],
+            INSTANCE_NAME,
+            f"{queue_wait_sec:.2f}",
+            f"{gen_sec:.2f}",
         ])
 
         async with s.lock:
@@ -1453,13 +1471,14 @@ async def startup():
     for i in range(max(1, WORKER_COUNT)):
         asyncio.create_task(worker_loop(i + 1))
     log.info(
-        "App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s)",
+        "App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s, instance=%s)",
         WORKER_COUNT,
         MAX_QUEUE_SIZE,
         RATE_LIMIT_SECONDS,
         FP_DEDUP_SECONDS,
         "on" if SHEET_ID else "off",
         SHEET_TAB,
+        INSTANCE_NAME,
     )
 
 
