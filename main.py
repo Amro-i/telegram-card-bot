@@ -1175,6 +1175,29 @@ async def handle_webhook(req: Request, bot_key: str):
     data = await req.json()
     update_id, chat_id, text_raw, msg_id, cq_id, user_id, username = extract_update(data)
 
+    # ---------------------------
+    # TEMP: extract Telegram photo file_id
+    # Send any photo to the bot and it will reply with file_id
+    # ---------------------------
+    msg = data.get("message") or {}
+    photos = msg.get("photo") or []
+
+    if photos:
+        largest = photos[-1]  # usually the largest resolution
+        file_id = largest.get("file_id", "")
+        file_unique_id = largest.get("file_unique_id", "")
+
+        log.info("PHOTO file_id=%s file_unique_id=%s", file_id, file_unique_id)
+
+        if chat_id:
+            tg_send_message(
+                bot_token,
+                chat_id,
+                f"file_id:\n{file_id}\n\nfile_unique_id:\n{file_unique_id}"
+            )
+
+        return {"ok": True}
+
     if not chat_id:
         return {"ok": True}
 
