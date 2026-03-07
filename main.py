@@ -522,8 +522,8 @@ def msg_high_load(ar_only: bool) -> str:
 
 def msg_rate_limited(ar_only: bool, seconds: float) -> str:
     if ar_only:
-        return f"تم استقبال طلب توليد قبل قليل. الرجاء الانتظار {int(seconds)} ثانية ثم حاول مرة أخرى."
-    ar = f"تم استقبال طلب توليد قبل قليل. الرجاء الانتظار {int(seconds)} ثانية ثم حاول مرة أخرى."
+        return f"تم استقبال طلب إصدار قبل قليل. الرجاء الانتظار {int(seconds)} ثانية ثم حاول مرة أخرى."
+    ar = f"تم استقبال طلب إصدار قبل قليل. الرجاء الانتظار {int(seconds)} ثانية ثم حاول مرة أخرى."
     en = f"Please wait {int(seconds)} seconds then try again."
     return ar + DIV + en
 
@@ -531,7 +531,7 @@ def msg_rate_limited(ar_only: bool, seconds: float) -> str:
 BRANDING: Dict[str, Dict[str, str]] = {
     "alarabia": {
         "welcome_ar": (
-            "مرحباً بكم في بوت توليد بطاقات التهنئة الرقمية بشركة العربية\n\n"
+            "مرحباً بكم في بوت إصدار بطاقات التهنئة الرقمية بشركة العربية\n\n"
             "يمكن لكل موظف إصدار البطاقة بسرعة وبشكل مستقل – مبادرة شخصية وحل رقمي – تطوير: عمرو إسماعيل"
         ),
         "welcome_en": (
@@ -543,19 +543,19 @@ BRANDING: Dict[str, Dict[str, str]] = {
     "alhafez": {
         "welcome_ar": (
             "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي جمعية الحافظ لتأهيل حفاظ القرآن الكريم\n\n"
-            "تطوير: عمرو بن عبدالعزيز العديني"
+            "تطوير: عمرو إسماعيل"
         )
     },
     "alfalah": {
         "welcome_ar": (
             "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي مدارس الفلاح\n\n"
-            "تطوير: عمرو بن عبدالعزيز اسماعيل"
+            "تطوير: عمرو إسماعيل"
         )
     },
     "kounuz_alward": {
         "welcome_ar": (
             "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي كنوز الورد\n\n"
-            "تطوير: عمرو العديني"
+            "تطوير: عمرو إسماعيل"
         )
     },
     "amro": {
@@ -606,11 +606,11 @@ def ar_msg_confirm(name_ar: str, name_en: str) -> str:
 
 
 def ar_msg_creating() -> str:
-    return "جاري توليد البطاقة..." + DIV + "Generating your card..."
+    return "جاري إصدار البطاقة..." + DIV + "Generating your card..."
 
 
 def ar_msg_still_working() -> str:
-    return "لا يزال جاري توليد البطاقة..." + DIV + "Still generating your card..."
+    return "لا يزال جاري إصدار البطاقة..." + DIV + "Still generating your card..."
 
 
 def ar_msg_ready() -> str:
@@ -618,7 +618,7 @@ def ar_msg_ready() -> str:
 
 
 def ar_msg_error(err: str) -> str:
-    return "خطأ أثناء توليد البطاقة:\n" + err + DIV + "Error while generating the card:\n" + err
+    return "خطأ أثناء إصدار البطاقة:\n" + err + DIV + "Error while generating the card:\n" + err
 
 
 def ar_kb_start_card() -> dict:
@@ -636,7 +636,7 @@ def ar_kb_wait_en() -> dict:
 def ar_kb_confirm() -> dict:
     return {
         "inline_keyboard": [
-            [{"text": "توليد البطاقة / Generate", "callback_data": "GEN"}],
+            [{"text": "✅ إصدار البطاقة / Generate", "callback_data": "GEN"}],
             [
                 {"text": "تعديل العربي / Edit Arabic", "callback_data": "EDIT_AR"},
                 {"text": "تعديل الإنجليزي / Edit English", "callback_data": "EDIT_EN"},
@@ -701,7 +701,7 @@ def hz_msg_creating() -> str:
 
 
 def hz_msg_still_working() -> str:
-    return "لا يزال جاري توليد البطاقة..."
+    return "لا يزال جاري إصدار البطاقة..."
 
 
 def hz_msg_ready() -> str:
@@ -709,7 +709,7 @@ def hz_msg_ready() -> str:
 
 
 def hz_msg_error(err: str) -> str:
-    return "خطأ أثناء توليد البطاقة:\n" + err
+    return "خطأ أثناء إصدار البطاقة:\n" + err
 
 
 def hz_kb_start_card() -> dict:
