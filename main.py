@@ -106,6 +106,10 @@ TEMPLATE_SLIDES_ID_AMRO_VERTICAL_1 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL
 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2", "").strip()
 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3", "").strip()
 
+# NEW: preview images for Amro bot via Telegram file_id
+AMRO_PREVIEW_SQUARE = os.getenv("AMRO_PREVIEW_SQUARE", "").strip()
+AMRO_PREVIEW_VERTICAL = os.getenv("AMRO_PREVIEW_VERTICAL", "").strip()
+
 TemplateField = Union[str, List[str]]
 BOTS_CONFIG_JSON = os.getenv("BOTS_CONFIG_JSON", "").strip()
 
@@ -388,6 +392,24 @@ def tg_send_photo(
     if reply_markup is not None:
         data["reply_markup"] = json.dumps(reply_markup)
     tg(bot_token, "sendPhoto", data=data, files=files)
+
+
+def tg_send_photo_by_file_id(
+    bot_token: str,
+    chat_id: str,
+    file_id: str,
+    caption: str = "",
+    reply_markup: Optional[dict] = None
+) -> None:
+    data = {
+        "chat_id": chat_id,
+        "photo": file_id,
+    }
+    if caption:
+        data["caption"] = caption
+    if reply_markup is not None:
+        data["reply_markup"] = json.dumps(reply_markup)
+    tg(bot_token, "sendPhoto", data=data)
 
 
 # ---------------------------
@@ -1175,31 +1197,6 @@ async def handle_webhook(req: Request, bot_key: str):
     data = await req.json()
     update_id, chat_id, text_raw, msg_id, cq_id, user_id, username = extract_update(data)
 
-    # ---------------------------
-    # TEMP: extract Telegram photo file_id
-    # ONLY for Amro bot
-    # Send any photo to Amro bot and it will reply with file_id
-    # ---------------------------
-    if bot_key == "amro":
-        msg = data.get("message") or {}
-        photos = msg.get("photo") or []
-
-        if photos:
-            largest = photos[-1]
-            file_id = largest.get("file_id", "")
-            file_unique_id = largest.get("file_unique_id", "")
-
-            log.info("AMRO PHOTO file_id=%s file_unique_id=%s", file_id, file_unique_id)
-
-            if chat_id:
-                tg_send_message(
-                    bot_token,
-                    chat_id,
-                    f"file_id:\n{file_id}\n\nfile_unique_id:\n{file_unique_id}"
-                )
-
-            return {"ok": True}
-
     if not chat_id:
         return {"ok": True}
 
@@ -1409,6 +1406,15 @@ async def handle_webhook(req: Request, bot_key: str):
                 s.chosen_size = "SQUARE"
                 if design_count > 1:
                     s.state = STATE_CHOOSE_DESIGN
+
+                    if bot_key == "amro" and AMRO_PREVIEW_SQUARE:
+                        tg_send_photo_by_file_id(
+                            bot_token,
+                            s.chat_id,
+                            AMRO_PREVIEW_SQUARE,
+                            caption="نماذج التصاميم للمقاس المربع"
+                        )
+
                     tg_send_message(
                         bot_token,
                         s.chat_id,
@@ -1430,6 +1436,15 @@ async def handle_webhook(req: Request, bot_key: str):
                 s.chosen_size = "VERTICAL"
                 if design_count > 1:
                     s.state = STATE_CHOOSE_DESIGN
+
+                    if bot_key == "amro" and AMRO_PREVIEW_VERTICAL:
+                        tg_send_photo_by_file_id(
+                            bot_token,
+                            s.chat_id,
+                            AMRO_PREVIEW_VERTICAL,
+                            caption="نماذج التصاميم للمقاس الطولي"
+                        )
+
                     tg_send_message(
                         bot_token,
                         s.chat_id,
