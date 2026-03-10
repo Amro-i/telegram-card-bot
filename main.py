@@ -606,7 +606,7 @@ BRANDING: Dict[str, Dict[str, str]] = {
     },
     "kounuz_alward": {
         "welcome_ar": (
-            "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي كنوز الورد\n\n"
+            "مرحبا بكم في بوت إصدار بطاقات التهنئة من كنوز الورد\n\n"
             "تطوير: عمرو إسماعيل"
         )
     },
@@ -808,7 +808,7 @@ def kb_preview_ar(supports_vertical: bool, design_count: int) -> dict:
     if supports_vertical:
         rows.append([{"text": "تغيير المقاس", "callback_data": "BACK_SIZE"}])
     if design_count > 1:
-        rows.append([{"text": "تغيير رقم التصميم", "callback_data": "BACK_DESIGN"}])
+        rows.append([{"text": "تغيير التصميم", "callback_data": "BACK_DESIGN"}])
     rows.append([{"text": "❌ إلغاء العملية", "callback_data": "CANCEL"}])
     return {"inline_keyboard": rows}
 
