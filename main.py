@@ -2209,7 +2209,7 @@ async def share_file(token: str):
         media_type="image/png",
         headers={
             "Cache-Control": "private, max-age=300",
-            "Content-Disposition": f'inline; filename="card-{token}.png"',
+            "Content-Disposition": f'attachment; filename="card-{token}.png"',
         },
     )
 
@@ -2411,33 +2411,39 @@ async def share_mini(token: str):
       ar: {{
         pageTitle: "مشاركة البطاقة",
         title: "مشاركة البطاقة",
-        subtitle: "اضغط الزر لمشاركة الصورة",
+        subtitle: "في الآيفون مشاركة، وفي الأندرويد حفظ البطاقة",
         shareBtn: "📤 مشاركة البطاقة",
+        saveBtn: "💾 حفظ البطاقة",
         openBtn: "🖼️ فتح الصورة",
         opening: "جاري فتح المشاركة...",
+        saving: "جاري حفظ البطاقة...",
         preparingTelegram: "جاري تجهيز المشاركة داخل تيليجرام...",
         shared: "تمت المشاركة بنجاح.",
+        saved: "تم بدء تنزيل البطاقة.",
         shareCancelled: "",
-        failed: "تعذر فتح المشاركة.",
+        failed: "تعذر تنفيذ العملية.",
         openOnly: "تم فتح الصورة.",
         telegramFallback: "تعذر فتح مشاركة الملف المباشرة. تم التحويل إلى مشاركة تيليجرام.",
-        unsupported: "تعذر فتح المشاركة المباشرة. يمكنك فتح الصورة ومشاركتها يدويًا.",
+        unsupported: "تعذر تنفيذ العملية مباشرة. يمكنك فتح الصورة والتعامل معها يدويًا.",
         imageAlt: "بطاقة التهنئة"
       }},
       en: {{
         pageTitle: "Share Card",
         title: "Share Card",
-        subtitle: "Tap the button to share the image",
+        subtitle: "On iPhone you can share, and on Android you can save the card",
         shareBtn: "📤 Share Card",
+        saveBtn: "💾 Save Card",
         openBtn: "🖼️ Open Image",
         opening: "Opening share sheet...",
+        saving: "Saving card...",
         preparingTelegram: "Preparing Telegram share...",
         shared: "Shared successfully.",
+        saved: "Download started.",
         shareCancelled: "",
-        failed: "Could not open sharing.",
+        failed: "Could not complete the action.",
         openOnly: "Image opened.",
         telegramFallback: "Direct file sharing is unavailable. Switched to Telegram sharing.",
-        unsupported: "Direct sharing is unavailable. You can open the image and share it manually.",
+        unsupported: "This action is unavailable directly. You can open the image manually.",
         imageAlt: "Greeting Card"
       }}
     }};
@@ -2457,7 +2463,6 @@ async def share_mini(token: str):
 
     titleEl.textContent = T.title;
     subtitleEl.textContent = T.subtitle;
-    shareBtn.textContent = T.shareBtn;
     openBtn.textContent = T.openBtn;
     cardImage.alt = T.imageAlt;
 
@@ -2469,6 +2474,25 @@ async def share_mini(token: str):
         console.log("tg init error", e);
       }}
     }}
+
+    function isTelegramMiniApp() {{
+      return !!(tg && tg.initDataUnsafe);
+    }}
+
+    function isIOS() {{
+      const platform = (tg?.platform || "").toLowerCase();
+      const ua = (navigator.userAgent || "").toLowerCase();
+      return platform === "ios" || /iphone|ipad|ipod/.test(ua);
+    }}
+
+    function isAndroid() {{
+      const platform = (tg?.platform || "").toLowerCase();
+      const ua = (navigator.userAgent || "").toLowerCase();
+      return platform === "android" || ua.includes("android");
+    }}
+
+    const ANDROID_SAVE_MODE = isAndroid() && !isIOS();
+    shareBtn.textContent = ANDROID_SAVE_MODE ? T.saveBtn : T.shareBtn;
 
     let isBusy = false;
 
@@ -2482,14 +2506,8 @@ async def share_mini(token: str):
       note.textContent = text || "";
     }}
 
-    function isTelegramMiniApp() {{
-      return !!(tg && tg.initDataUnsafe);
-    }}
-
-    function isAndroid() {{
-      const platform = (tg?.platform || "").toLowerCase();
-      const ua = (navigator.userAgent || "").toLowerCase();
-      return platform === "android" || ua.includes("android");
+    function getDownloadFileName() {{
+      return LANG === "ar" ? "card.png" : "greeting-card.png";
     }}
 
     async function buildShareFile() {{
@@ -2499,12 +2517,22 @@ async def share_mini(token: str):
       }});
       if (!res.ok) throw new Error("failed_to_fetch_image");
       const blob = await res.blob();
-      return new File([blob], "card.png", {{ type: blob.type || "image/png" }});
+      return new File([blob], getDownloadFileName(), {{ type: blob.type || "image/png" }});
     }}
 
     function openImageOnly() {{
       window.open(absoluteImageUrl, "_blank");
       setNote(T.openOnly);
+    }}
+
+    function fallbackBrowserDownload() {{
+      const a = document.createElement("a");
+      a.href = absoluteImageUrl;
+      a.download = getDownloadFileName();
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     }}
 
     async function requestPreparedMessageId() {{
@@ -2642,24 +2670,66 @@ async def share_mini(token: str):
       return true;
     }}
 
+    async function saveOnAndroid() {{
+      setNote(T.saving);
+
+      if (tg && typeof tg.downloadFile === "function") {{
+        try {{
+          tg.downloadFile({{
+            url: absoluteImageUrl,
+            file_name: getDownloadFileName()
+          }});
+          setNote(T.saved);
+          return true;
+        }} catch (e) {{
+          console.log("downloadFile failed", e);
+        }}
+      }}
+
+      try {{
+        fallbackBrowserDownload();
+        setNote(T.saved);
+        return true;
+      }} catch (e) {{
+        console.log("fallback download failed", e);
+      }}
+
+      openImageOnly();
+      return false;
+    }}
+
     async function doShare() {{
       if (isBusy) return;
 
       setBusy(true);
-      setNote(T.opening);
 
       try {{
-        const nativeShared = await tryNativeShareFirst();
-        if (nativeShared) {{
-          setNote("");
+        // Android: حفظ فقط
+        if (ANDROID_SAVE_MODE) {{
+          await saveOnAndroid();
           return;
+        }}
+
+        // iOS / غيره: مشاركة كما هي
+        setNote(T.opening);
+
+        try {{
+          const nativeShared = await tryNativeShareFirst();
+          if (nativeShared) {{
+            setNote("");
+            return;
+          }}
+        }} catch (err) {{
+          const errName = (err && err.name) ? err.name : "";
+          if (errName === "AbortError") {{
+            setNote(T.shareCancelled);
+            return;
+          }}
+          console.log("native share failed", err);
         }}
 
         if (isTelegramMiniApp()) {{
           try {{
-            if (isAndroid()) {{
-              setNote(T.telegramFallback);
-            }}
             const tgShared = await tryTelegramPreparedShare();
             if (tgShared) {{
               return;
@@ -2671,29 +2741,9 @@ async def share_mini(token: str):
 
         openImageOnly();
       }} catch (err) {{
-        console.log("share failed", err);
-        const errName = (err && err.name) ? err.name : "";
-
-        if (errName === "AbortError") {{
-          setNote(T.shareCancelled);
-        }} else {{
-          try {{
-            if (isTelegramMiniApp()) {{
-              if (isAndroid()) {{
-                setNote(T.telegramFallback);
-              }}
-              const tgShared = await tryTelegramPreparedShare();
-              if (tgShared) {{
-                return;
-              }}
-            }}
-          }} catch (e) {{
-            console.log("telegram fallback failed", e);
-          }}
-
-          setNote(T.unsupported);
-          openImageOnly();
-        }}
+        console.log("share/save failed", err);
+        setNote(T.unsupported);
+        openImageOnly();
       }} finally {{
         setBusy(false);
       }}
