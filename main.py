@@ -1,3 +1,4 @@
+```python
 import os
 import json
 import time
@@ -375,6 +376,20 @@ def tg(bot_token: str, method: str, data: Optional[dict] = None, files: Optional
     return r
 
 
+def tg_api_json(bot_token: str, method: str, payload: dict) -> dict:
+    url = TG_API.format(bot_token, method)
+    r = request_with_retry("POST", url, timeout=HTTP_TIMEOUT, json=payload)
+    try:
+        data = r.json()
+    except Exception:
+        raise RuntimeError(f"Telegram {method} returned non-JSON response: HTTP {r.status_code}")
+
+    if r.status_code != 200 or not data.get("ok"):
+        desc = data.get("description") if isinstance(data, dict) else None
+        raise RuntimeError(f"Telegram {method} failed: HTTP {r.status_code} - {desc or r.text[:300]}")
+    return data
+
+
 def tg_send_message(bot_token: str, chat_id: str, text: str, reply_markup: Optional[dict] = None) -> Optional[int]:
     payload = {"chat_id": chat_id, "text": text}
     if reply_markup is not None:
@@ -437,6 +452,36 @@ def tg_send_photo_by_file_id(
     if reply_markup is not None:
         data["reply_markup"] = json.dumps(reply_markup)
     tg(bot_token, "sendPhoto", data=data)
+
+
+def tg_save_prepared_inline_photo(
+    bot_token: str,
+    *,
+    user_id: str,
+    image_url: str,
+    title: str,
+    caption: str = "",
+) -> dict:
+    """
+    ينشئ PreparedInlineMessage خاص بالمستخدم الحالي،
+    ليتم إرساله من داخل Telegram Mini App.
+    """
+    payload = {
+        "user_id": int(user_id),
+        "result": {
+            "type": "photo",
+            "id": secrets.token_hex(8),
+            "photo_url": image_url,
+            "thumbnail_url": image_url,
+            "title": title,
+            "caption": caption or "",
+        },
+        "allow_user_chats": True,
+        "allow_bot_chats": True,
+        "allow_group_chats": True,
+        "allow_channel_chats": True,
+    }
+    return tg_api_json(bot_token, "savePreparedInlineMessage", payload)["result"]
 
 
 # Async wrappers to avoid blocking event loop
@@ -2170,6 +2215,51 @@ async def share_file(token: str):
     )
 
 
+@app.post("/share-prepared/{token}")
+async def share_prepared(token: str):
+    item = get_share_item(token)
+    if not item:
+        raise HTTPException(status_code=404, detail="Card not found or expired")
+
+    bot_key = str(item.get("bot_key") or "").strip()
+    if not bot_key or bot_key not in BOTS:
+        raise HTTPException(status_code=400, detail="Invalid bot")
+
+    user_id = str(item.get("user_id") or "").strip()
+    if not user_id.isdigit():
+        raise HTTPException(status_code=400, detail="Missing or invalid user_id")
+
+    bot_token = BOTS[bot_key]["token"]
+    image_url = make_public_url(f"/share-file/{token}.png")
+
+    is_ar_only = BOTS[bot_key].get("lang_mode") == "AR_ONLY"
+    if is_ar_only:
+        title = "بطاقة تهنئة"
+        caption = ""
+    else:
+        title = "Greeting Card"
+        caption = ""
+
+    try:
+        prepared = await asyncio.to_thread(
+            tg_save_prepared_inline_photo,
+            bot_token,
+            user_id=user_id,
+            image_url=image_url,
+            title=title,
+            caption=caption,
+        )
+    except Exception as e:
+        log.exception("share_prepared failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to prepare share message: {e}")
+
+    return {
+        "ok": True,
+        "id": prepared["id"],
+        "expiration_date": prepared.get("expiration_date"),
+    }
+
+
 @app.get("/share-mini/{token}", response_class=HTMLResponse)
 async def share_mini(token: str):
     item = get_share_item(token)
@@ -2177,6 +2267,7 @@ async def share_mini(token: str):
         raise HTTPException(status_code=404, detail="Card not found or expired")
 
     image_url = make_public_url(f"/share-file/{token}.png")
+    prepared_url = make_public_url(f"/share-prepared/{token}")
 
     html = f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -2186,7 +2277,7 @@ async def share_mini(token: str):
     name="viewport"
     content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
   />
-  <title>مشاركة البطاقة</title>
+  <title>Share Card</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     * {{
@@ -2260,6 +2351,22 @@ async def share_mini(token: str):
       opacity: 0.65;
       cursor: default;
     }}
+    .btn-secondary {{
+      width: 100%;
+      border: 0;
+      border-radius: 18px;
+      padding: 16px 14px;
+      font-size: 20px;
+      font-weight: 700;
+      cursor: pointer;
+      background: #e2e8f0;
+      color: #0f172a;
+      margin-top: 10px;
+    }}
+    .btn-secondary:disabled {{
+      opacity: 0.65;
+      cursor: default;
+    }}
     .note {{
       text-align: center;
       margin-top: 12px;
@@ -2267,26 +2374,94 @@ async def share_mini(token: str):
       line-height: 1.8;
       color: #64748b;
       min-height: 30px;
+      white-space: pre-line;
     }}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="title">مشاركة البطاقة</div>
-      <div class="sub">اضغط الزر لمشاركة الصورة بدون أي نص تلقائي</div>
+      <div id="title" class="title"></div>
+      <div id="subtitle" class="sub"></div>
 
       <div class="preview">
-        <img src="{image_url}" alt="بطاقة التهنئة" />
+        <img id="cardImage" src="{image_url}" alt="" />
       </div>
 
-      <button id="shareBtn" class="btn">📤 مشاركة البطاقة</button>
+      <button id="shareBtn" class="btn"></button>
+      <button id="openBtn" class="btn-secondary"></button>
       <div id="note" class="note"></div>
     </div>
   </div>
 
   <script>
     const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    const absoluteImageUrl = {json.dumps(image_url)};
+    const preparedApiUrl = {json.dumps(prepared_url)};
+
+    function getLang() {{
+      const tgLang = tg?.initDataUnsafe?.user?.language_code || "";
+      const navLang = navigator.language || navigator.userLanguage || "";
+      const lang = (tgLang || navLang || "").toLowerCase();
+      return lang.startsWith("ar") ? "ar" : "en";
+    }}
+
+    const LANG = getLang();
+
+    const I18N = {{
+      ar: {{
+        pageTitle: "مشاركة البطاقة",
+        title: "مشاركة البطاقة",
+        subtitle: "اضغط الزر لمشاركة الصورة",
+        shareBtn: "📤 مشاركة البطاقة",
+        openBtn: "🖼️ فتح الصورة",
+        opening: "جاري فتح المشاركة...",
+        preparingTelegram: "جاري تجهيز المشاركة داخل تيليجرام...",
+        shared: "تمت المشاركة بنجاح.",
+        shareCancelled: "",
+        failed: "تعذر فتح المشاركة.",
+        openOnly: "تم فتح الصورة.",
+        telegramFallback: "تعذر فتح مشاركة الملف المباشرة. تم التحويل إلى مشاركة تيليجرام.",
+        unsupported: "تعذر فتح المشاركة المباشرة. يمكنك فتح الصورة ومشاركتها يدويًا.",
+        imageAlt: "بطاقة التهنئة"
+      }},
+      en: {{
+        pageTitle: "Share Card",
+        title: "Share Card",
+        subtitle: "Tap the button to share the image",
+        shareBtn: "📤 Share Card",
+        openBtn: "🖼️ Open Image",
+        opening: "Opening share sheet...",
+        preparingTelegram: "Preparing Telegram share...",
+        shared: "Shared successfully.",
+        shareCancelled: "",
+        failed: "Could not open sharing.",
+        openOnly: "Image opened.",
+        telegramFallback: "Direct file sharing is unavailable. Switched to Telegram sharing.",
+        unsupported: "Direct sharing is unavailable. You can open the image and share it manually.",
+        imageAlt: "Greeting Card"
+      }}
+    }};
+
+    const T = I18N[LANG];
+
+    document.documentElement.lang = LANG;
+    document.documentElement.dir = LANG === "ar" ? "rtl" : "ltr";
+    document.title = T.pageTitle;
+
+    const titleEl = document.getElementById("title");
+    const subtitleEl = document.getElementById("subtitle");
+    const cardImage = document.getElementById("cardImage");
+    const shareBtn = document.getElementById("shareBtn");
+    const openBtn = document.getElementById("openBtn");
+    const note = document.getElementById("note");
+
+    titleEl.textContent = T.title;
+    subtitleEl.textContent = T.subtitle;
+    shareBtn.textContent = T.shareBtn;
+    openBtn.textContent = T.openBtn;
+    cardImage.alt = T.imageAlt;
+
     if (tg) {{
       try {{
         tg.ready();
@@ -2296,13 +2471,26 @@ async def share_mini(token: str):
       }}
     }}
 
-    const shareBtn = document.getElementById("shareBtn");
-    const note = document.getElementById("note");
-    const absoluteImageUrl = {json.dumps(image_url)};
     let isBusy = false;
+
+    function setBusy(flag) {{
+      isBusy = !!flag;
+      shareBtn.disabled = isBusy;
+      openBtn.disabled = isBusy;
+    }}
 
     function setNote(text) {{
       note.textContent = text || "";
+    }}
+
+    function isTelegramMiniApp() {{
+      return !!(tg && tg.initDataUnsafe);
+    }}
+
+    function isAndroid() {{
+      const platform = (tg?.platform || "").toLowerCase();
+      const ua = (navigator.userAgent || "").toLowerCase();
+      return platform === "android" || ua.includes("android");
     }}
 
     async function buildShareFile() {{
@@ -2315,43 +2503,205 @@ async def share_mini(token: str):
       return new File([blob], "card.png", {{ type: blob.type || "image/png" }});
     }}
 
+    function openImageOnly() {{
+      window.open(absoluteImageUrl, "_blank");
+      setNote(T.openOnly);
+    }}
+
+    async function requestPreparedMessageId() {{
+      const res = await fetch(preparedApiUrl, {{
+        method: "POST",
+        credentials: "omit",
+        headers: {{
+          "Content-Type": "application/json"
+        }}
+      }});
+
+      if (!res.ok) {{
+        throw new Error("prepared_message_request_failed");
+      }}
+
+      const data = await res.json();
+      if (!data || !data.ok || !data.id) {{
+        throw new Error("prepared_message_invalid_response");
+      }}
+
+      return data.id;
+    }}
+
+    function sendPreparedMessage(id) {{
+      return new Promise((resolve, reject) => {{
+        if (!tg) {{
+          reject(new Error("telegram_not_available"));
+          return;
+        }}
+
+        let done = false;
+
+        function cleanup() {{
+          try {{
+            tg.offEvent("shareMessageSent", onSent);
+            tg.offEvent("shareMessageFailed", onFailed);
+            tg.offEvent("prepared_message_sent", onPreparedSent);
+            tg.offEvent("prepared_message_failed", onPreparedFailed);
+          }} catch (e) {{
+            console.log("cleanup event error", e);
+          }}
+        }}
+
+        function finishOk() {{
+          if (done) return;
+          done = true;
+          cleanup();
+          resolve();
+        }}
+
+        function finishErr(error) {{
+          if (done) return;
+          done = true;
+          cleanup();
+          reject(error instanceof Error ? error : new Error(String(error || "telegram_share_failed")));
+        }}
+
+        function onSent() {{
+          finishOk();
+        }}
+
+        function onFailed(payload) {{
+          const msg = payload && payload.error ? payload.error : "shareMessageFailed";
+          finishErr(new Error(msg));
+        }}
+
+        function onPreparedSent() {{
+          finishOk();
+        }}
+
+        function onPreparedFailed(payload) {{
+          const msg = payload && payload.error ? payload.error : "prepared_message_failed";
+          finishErr(new Error(msg));
+        }}
+
+        try {{
+          tg.onEvent("shareMessageSent", onSent);
+          tg.onEvent("shareMessageFailed", onFailed);
+          tg.onEvent("prepared_message_sent", onPreparedSent);
+          tg.onEvent("prepared_message_failed", onPreparedFailed);
+        }} catch (e) {{
+          console.log("event bind error", e);
+        }}
+
+        try {{
+          if (typeof tg.shareMessage === "function") {{
+            tg.shareMessage(id);
+          }} else if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === "function") {{
+            window.TelegramWebviewProxy.postEvent(
+              "web_app_send_prepared_message",
+              JSON.stringify({{ id }})
+            );
+          }} else if (window.external && typeof window.external.notify === "function") {{
+            window.external.notify(
+              JSON.stringify({{
+                eventType: "web_app_send_prepared_message",
+                eventData: {{ id }}
+              }})
+            );
+          }} else {{
+            finishErr(new Error("telegram_share_api_not_available"));
+            return;
+          }}
+        }} catch (e) {{
+          finishErr(e);
+          return;
+        }}
+
+        setTimeout(() => {{
+          if (!done) {{
+            finishErr(new Error("telegram_share_timeout"));
+          }}
+        }}, 15000);
+      }});
+    }}
+
+    async function tryNativeShareFirst() {{
+      const file = await buildShareFile();
+      if (navigator.canShare && navigator.canShare({{ files: [file] }})) {{
+        await navigator.share({{ files: [file] }});
+        return true;
+      }}
+      return false;
+    }}
+
+    async function tryTelegramPreparedShare() {{
+      if (!isTelegramMiniApp()) {{
+        return false;
+      }}
+
+      setNote(T.preparingTelegram);
+      const preparedId = await requestPreparedMessageId();
+      await sendPreparedMessage(preparedId);
+      setNote(T.shared);
+      return true;
+    }}
+
     async function doShare() {{
       if (isBusy) return;
-      isBusy = true;
-      shareBtn.disabled = true;
-      setNote("جاري فتح المشاركة...");
+
+      setBusy(true);
+      setNote(T.opening);
 
       try {{
-        const file = await buildShareFile();
-
-        if (navigator.canShare && navigator.canShare({{ files: [file] }})) {{
-          await navigator.share({{
-            files: [file]
-          }});
+        const nativeShared = await tryNativeShareFirst();
+        if (nativeShared) {{
           setNote("");
           return;
         }}
 
-        // لا نرسل أي نص تلقائي. إذا لم يدعم الجهاز مشاركة الملفات
-        // نفتح الصورة فقط ليقوم المستخدم بمشاركتها يدويًا.
-        window.open(absoluteImageUrl, "_blank");
-        setNote("هذا الجهاز لا يدعم المشاركة المباشرة للملف. تم فتح الصورة فقط.");
+        if (isTelegramMiniApp()) {{
+          try {{
+            if (isAndroid()) {{
+              setNote(T.telegramFallback);
+            }}
+            const tgShared = await tryTelegramPreparedShare();
+            if (tgShared) {{
+              return;
+            }}
+          }} catch (e) {{
+            console.log("telegram prepared share failed", e);
+          }}
+        }}
+
+        openImageOnly();
       }} catch (err) {{
         console.log("share failed", err);
         const errName = (err && err.name) ? err.name : "";
 
         if (errName === "AbortError") {{
-          setNote("");
+          setNote(T.shareCancelled);
         }} else {{
-          setNote("تعذر فتح المشاركة");
+          try {{
+            if (isTelegramMiniApp()) {{
+              if (isAndroid()) {{
+                setNote(T.telegramFallback);
+              }}
+              const tgShared = await tryTelegramPreparedShare();
+              if (tgShared) {{
+                return;
+              }}
+            }}
+          }} catch (e) {{
+            console.log("telegram fallback failed", e);
+          }}
+
+          setNote(T.unsupported);
+          openImageOnly();
         }}
       }} finally {{
-        isBusy = false;
-        shareBtn.disabled = false;
+        setBusy(false);
       }}
     }}
 
     shareBtn.addEventListener("click", doShare);
+    openBtn.addEventListener("click", openImageOnly);
   </script>
 </body>
 </html>
@@ -2445,3 +2795,9 @@ async def webhook_kounuz_alward(req: Request):
 @app.post("/webhook/amro")
 async def webhook_amro(req: Request):
     return await handle_webhook(req, "amro")
+```
+
+مهم جدًا قبل اللصق والتشغيل:
+طريقة `savePreparedInlineMessage` تحتاج أن تكون مدعومة ومفعلة عندك من جهة البوت ونسخة تيليجرام. لو ظهر لك خطأ من Telegram على هذا الميثود، فهذا يعني أن الحساب/البوت أو بيئة التشغيل لا تدعمه بعد، وساعتها نرجع لخطة بديلة خاصة بأندرويد.
+
+الشيء الثاني: لو تريد، أرسل لك بعد هذه الكتلة نسخة ثانية **منظفة أكثر** مع تقليل رسائل الـ note والنصوص، بحيث تكون جاهزة مباشرة للإنتاج.
