@@ -6,16 +6,13 @@ import asyncio
 import logging
 import random
 import secrets
-import mimetypes
-from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, Tuple, List, Union
 from datetime import datetime, timezone, timedelta
-from urllib.parse import quote
 
 import requests
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, Response
 
 from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
@@ -62,10 +59,9 @@ ACTIVE_BOTS = os.getenv("ACTIVE_BOTS", "").strip()
 # NEW: temp folder where copied presentations are created
 OUTPUT_FOLDER_ID = os.getenv("OUTPUT_FOLDER_ID", "").strip()
 
-# NEW: public share page settings for Amro
+# NEW: base url for public mini app / share links
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
-PUBLIC_CARDS_DIR = Path(os.getenv("PUBLIC_CARDS_DIR", "public_cards")).resolve()
-PUBLIC_CARDS_DIR.mkdir(parents=True, exist_ok=True)
+AMRO_SHARE_TTL_SECONDS = int(os.getenv("AMRO_SHARE_TTL_SECONDS", "3600"))
 
 # ---------------------------
 # Google (shared)
@@ -106,8 +102,6 @@ SHEET_TAB = os.getenv("SHEET_TAB", "Tracking").strip()
 # L INSTANCE_NAME
 # M QUEUE_WAIT_SEC
 # N GEN_SEC
-#
-# So every appended row must contain EXACTLY 14 values in this order.
 SHEET_COLUMNS_COUNT = 14
 
 # ---------------------------
@@ -136,12 +130,15 @@ TEMPLATE_SLIDES_ID_AMRO_VERTICAL_1 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL
 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2", "").strip()
 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3", "").strip()
 
-# NEW: preview images for Amro bot via Telegram file_id
+# preview images for Amro bot via Telegram file_id
 AMRO_PREVIEW_SQUARE = os.getenv("AMRO_PREVIEW_SQUARE", "").strip()
 AMRO_PREVIEW_VERTICAL = os.getenv("AMRO_PREVIEW_VERTICAL", "").strip()
 
 TemplateField = Union[str, List[str]]
 BOTS_CONFIG_JSON = os.getenv("BOTS_CONFIG_JSON", "").strip()
+
+# share store for Amro mini app
+AMRO_SHARE_STORE: Dict[str, Dict[str, Any]] = {}
 
 
 def _default_bots() -> Dict[str, Dict[str, Any]]:
@@ -452,7 +449,7 @@ def tg_send_photo_by_file_id(
 
 
 # ---------------------------
-# Public cards helpers (Amro only)
+# Amro mini app share helpers
 # ---------------------------
 def guess_base_url() -> str:
     if PUBLIC_BASE_URL:
@@ -466,41 +463,62 @@ def guess_base_url() -> str:
 def make_public_url(path: str) -> str:
     base = guess_base_url()
     if not base:
-        return ""
+        return path
     return f"{base}{path}"
 
 
-def save_public_card_png(bot_key: str, png_bytes: bytes) -> Optional[str]:
-    if bot_key != "amro":
-        return None
+def cleanup_amro_share_store() -> None:
+    now = time.time()
+    expired = [k for k, v in AMRO_SHARE_STORE.items() if float(v.get("expires_at", 0)) <= now]
+    for k in expired:
+        AMRO_SHARE_STORE.pop(k, None)
 
-    token = secrets.token_urlsafe(16)
-    folder = PUBLIC_CARDS_DIR / bot_key
-    folder.mkdir(parents=True, exist_ok=True)
-    file_path = folder / f"{token}.png"
-    file_path.write_bytes(png_bytes)
+
+def create_amro_share_token(png_bytes: bytes, *, chat_id: str, user_id: str) -> str:
+    cleanup_amro_share_store()
+    token = secrets.token_urlsafe(18)
+    AMRO_SHARE_STORE[token] = {
+        "png_bytes": png_bytes,
+        "chat_id": chat_id,
+        "user_id": user_id,
+        "created_at": time.time(),
+        "expires_at": time.time() + AMRO_SHARE_TTL_SECONDS,
+    }
     return token
 
 
-def public_card_file_path(bot_key: str, token: str) -> Path:
-    safe_bot = re.sub(r"[^a-zA-Z0-9_\-]", "", bot_key)
-    safe_token = re.sub(r"[^a-zA-Z0-9_\-]", "", token)
-    return PUBLIC_CARDS_DIR / safe_bot / f"{safe_token}.png"
+def get_amro_share_item(token: str) -> Optional[Dict[str, Any]]:
+    cleanup_amro_share_store()
+    item = AMRO_SHARE_STORE.get(token)
+    if not item:
+        return None
+    if float(item.get("expires_at", 0)) <= time.time():
+        AMRO_SHARE_STORE.pop(token, None)
+        return None
+    return item
 
 
-def kb_amro_share_page(page_url: str) -> dict:
+def kb_amro_share_webapp(webapp_url: str) -> dict:
     return {
         "inline_keyboard": [
-            [{"text": "📤 فتح صفحة المشاركة", "url": page_url}],
-            [{"text": "↩️ البداية", "callback_data": "START"}],
+            [
+                {
+                    "text": "📤 مشاركة البطاقة",
+                    "web_app": {"url": webapp_url}
+                }
+            ],
+            [
+                {"text": "↩️ البداية", "callback_data": "START"}
+            ],
         ]
     }
 
 
-def msg_amro_share_page() -> str:
+def msg_amro_share_webapp() -> str:
     return (
-        "تم تجهيز صفحة البطاقة.\n\n"
-        "اضغط الزر التالي لفتح صفحة المشاركة والتنزيل."
+        "للمشاركة السريعة:\n\n"
+        "اضغط زر (مشاركة البطاقة)، ثم إن لم تظهر المشاركة تلقائيًا "
+        "اضغط الزر الكبير داخل النافذة."
     )
 
 
@@ -1079,23 +1097,26 @@ async def process_job(job: Job):
 
         tg_send_photo(bot_token, job.chat_id, png_bytes, caption="", reply_markup=None)
 
-        share_page_url = ""
+        amro_share_url = ""
         if job.bot_key == "amro":
-            public_token = save_public_card_png(job.bot_key, png_bytes)
-            if public_token:
-                share_page_url = make_public_url(f"/amro/share/{public_token}")
+            share_token = create_amro_share_token(
+                png_bytes,
+                chat_id=job.chat_id,
+                user_id=job.user_id,
+            )
+            amro_share_url = make_public_url(f"/amro/share-mini/{share_token}")
 
         if bot["lang_mode"] == "AR_EN":
             tg_send_message(bot_token, job.chat_id, ar_msg_ready(), ar_kb_after_ready())
         else:
             tg_send_message(bot_token, job.chat_id, hz_msg_ready(), hz_kb_after_ready())
 
-        if job.bot_key == "amro" and share_page_url:
+        if job.bot_key == "amro" and amro_share_url:
             tg_send_message(
                 bot_token,
                 job.chat_id,
-                msg_amro_share_page(),
-                kb_amro_share_page(share_page_url),
+                msg_amro_share_webapp(),
+                kb_amro_share_webapp(amro_share_url),
             )
 
         safe_sheet_append_row([
@@ -1977,193 +1998,171 @@ async def handle_webhook(req: Request, bot_key: str):
 
 
 # ---------------------------
-# Share Page Routes (Amro only)
+# Amro mini app routes
 # ---------------------------
-@app.get("/amro/card/{token}.png")
-async def amro_card_png(token: str):
-    file_path = public_card_file_path("amro", token)
-    if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Card not found")
+@app.get("/amro/share-file/{token}.png")
+async def amro_share_file(token: str):
+    item = get_amro_share_item(token)
+    if not item:
+        raise HTTPException(status_code=404, detail="Card not found or expired")
 
-    media_type, _ = mimetypes.guess_type(str(file_path))
-    return FileResponse(
-        path=str(file_path),
-        media_type=media_type or "image/png",
-        filename=f"amro-card-{token}.png",
+    return Response(
+        content=item["png_bytes"],
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Content-Disposition": f'inline; filename="amro-card-{token}.png"',
+        },
     )
 
 
-@app.get("/amro/share/{token}", response_class=HTMLResponse)
-async def amro_share_page(token: str):
-    file_path = public_card_file_path("amro", token)
-    if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Card not found")
+@app.get("/amro/share-mini/{token}", response_class=HTMLResponse)
+async def amro_share_mini(token: str):
+    item = get_amro_share_item(token)
+    if not item:
+        raise HTTPException(status_code=404, detail="Card not found or expired")
 
-    image_url = f"/amro/card/{quote(token)}.png"
+    image_url = make_public_url(f"/amro/share-file/{token}.png")
 
     html = f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>بطاقة التهنئة</title>
-  <meta name="theme-color" content="#0f172a" />
-  <meta property="og:title" content="بطاقة تهنئة" />
-  <meta property="og:description" content="عرض ومشاركة بطاقة التهنئة" />
-  <meta property="og:image" content="{image_url}" />
+  <title>مشاركة البطاقة</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
-    * {{ box-sizing: border-box; }}
-    body {{
+    * {{
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }}
+    html, body {{
       margin: 0;
+      padding: 0;
+      background: #f8fafc;
+      color: #0f172a;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, Arial, sans-serif;
-      background: #f4f7fb;
-      color: #111827;
-      padding: 18px;
     }}
     .wrap {{
-      max-width: 680px;
-      margin: 0 auto;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
     }}
     .card {{
+      width: 100%;
+      max-width: 520px;
       background: #ffffff;
-      border-radius: 22px;
-      box-shadow: 0 10px 35px rgba(0,0,0,0.10);
-      overflow: hidden;
-      padding: 14px;
+      border-radius: 24px;
+      box-shadow: 0 10px 35px rgba(15, 23, 42, 0.12);
+      padding: 18px;
     }}
     .title {{
       text-align: center;
-      font-weight: 800;
       font-size: 24px;
-      margin: 10px 0 14px;
+      font-weight: 800;
+      margin-bottom: 10px;
     }}
-    .subtitle {{
+    .sub {{
       text-align: center;
       font-size: 15px;
-      color: #475569;
-      margin: 0 0 14px;
       line-height: 1.8;
+      color: #475569;
+      margin-bottom: 14px;
     }}
-    .img-box {{
+    .preview {{
       background: #eef2f7;
       border-radius: 18px;
       padding: 10px;
+      margin-bottom: 14px;
     }}
-    .img-box img {{
-      display: block;
+    .preview img {{
       width: 100%;
       height: auto;
+      display: block;
       border-radius: 14px;
-      object-fit: contain;
       background: #fff;
-    }}
-    .actions {{
-      display: grid;
-      gap: 12px;
-      margin-top: 16px;
     }}
     .btn {{
       width: 100%;
-      border: none;
+      border: 0;
       border-radius: 18px;
-      padding: 18px 16px;
-      font-size: 20px;
+      padding: 18px 14px;
+      font-size: 22px;
       font-weight: 800;
-      text-decoration: none;
-      display: block;
-      text-align: center;
       cursor: pointer;
-      -webkit-tap-highlight-color: transparent;
-    }}
-    .btn-share {{
       background: #16a34a;
-      color: white;
+      color: #fff;
     }}
-    .btn-download {{
-      background: #0f172a;
-      color: white;
-    }}
-    .btn-open {{
-      background: #e2e8f0;
-      color: #0f172a;
+    .btn:disabled {{
+      opacity: 0.65;
+      cursor: default;
     }}
     .note {{
-      margin-top: 14px;
       text-align: center;
+      margin-top: 12px;
       font-size: 14px;
-      color: #64748b;
       line-height: 1.8;
+      color: #64748b;
       min-height: 24px;
     }}
-    .small {{
-      font-size: 13px;
-      color: #94a3b8;
+    .tiny {{
       text-align: center;
-      margin-top: 10px;
-    }}
-    @media (max-width: 480px) {{
-      body {{ padding: 12px; }}
-      .btn {{ font-size: 21px; padding: 19px 14px; }}
-      .title {{ font-size: 22px; }}
+      margin-top: 8px;
+      font-size: 12px;
+      color: #94a3b8;
     }}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="title">بطاقة التهنئة</div>
-      <div class="subtitle">يمكنك مشاركة البطاقة أو تنزيلها على جهازك</div>
+      <div class="title">مشاركة البطاقة</div>
+      <div class="sub">سنحاول فتح مشاركة الجوال مباشرة</div>
 
-      <div class="img-box">
-        <img id="cardImage" src="{image_url}" alt="بطاقة التهنئة" />
+      <div class="preview">
+        <img src="{image_url}" alt="بطاقة التهنئة" />
       </div>
 
-      <div class="actions">
-        <button id="shareBtn" class="btn btn-share">📤 مشاركة البطاقة</button>
-        <a class="btn btn-download" href="{image_url}" download="amro-card.png">⬇️ تنزيل البطاقة</a>
-        <a class="btn btn-open" href="{image_url}" target="_blank" rel="noopener">🖼️ فتح الصورة</a>
-      </div>
-
+      <button id="shareBtn" class="btn">📤 مشاركة البطاقة</button>
       <div id="note" class="note"></div>
-      <div class="small">في بعض الأجهزة القديمة قد يتم استخدام التنزيل أو مشاركة الرابط كخيار احتياطي</div>
+      <div class="tiny">إذا لم تدعم المشاركة المباشرة على هذا الجهاز، سيظهر لك خيار فتح الصورة</div>
     </div>
   </div>
 
   <script>
-    const shareBtn = document.getElementById('shareBtn');
-    const note = document.getElementById('note');
-    const imageUrl = "{image_url}";
-    const absoluteImageUrl = new URL(imageUrl, window.location.origin).href;
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (tg) {{
+      try {{
+        tg.ready();
+        tg.expand();
+      }} catch (e) {{
+        console.log("tg init error", e);
+      }}
+    }}
+
+    const shareBtn = document.getElementById("shareBtn");
+    const note = document.getElementById("note");
+    const absoluteImageUrl = {json.dumps(image_url)};
 
     function setNote(text) {{
       note.textContent = text || "";
     }}
 
-    async function fallbackShareUrl() {{
-      try {{
-        if (navigator.share) {{
-          await navigator.share({{
-            title: "بطاقة التهنئة",
-            text: "بطاقة التهنئة",
-            url: absoluteImageUrl
-          }});
-          return true;
-        }}
-      }} catch (err) {{
-        console.log("fallback share url cancelled or failed", err);
-      }}
-      return false;
+    async function buildShareFile() {{
+      const res = await fetch(absoluteImageUrl, {{ cache: "no-store" }});
+      if (!res.ok) throw new Error("failed_to_fetch_image");
+      const blob = await res.blob();
+      return new File([blob], "amro-card.png", {{ type: blob.type || "image/png" }});
     }}
 
-    async function shareFileIfSupported() {{
+    async function doShare() {{
+      shareBtn.disabled = true;
+      setNote("جاري فتح المشاركة...");
+
       try {{
-        setNote("جاري تجهيز المشاركة...");
-
-        const res = await fetch(absoluteImageUrl, {{ cache: "no-store" }});
-        if (!res.ok) throw new Error("failed to fetch image");
-
-        const blob = await res.blob();
-        const file = new File([blob], "amro-card.png", {{ type: blob.type || "image/png" }});
+        const file = await buildShareFile();
 
         if (navigator.canShare && navigator.canShare({{ files: [file] }})) {{
           await navigator.share({{
@@ -2171,30 +2170,38 @@ async def amro_share_page(token: str):
             title: "بطاقة التهنئة",
             text: "بطاقة التهنئة"
           }});
-          setNote("تم فتح قائمة المشاركة");
-          return true;
+          setNote("تم فتح المشاركة");
+          return;
         }}
 
-        setNote("هذا الجهاز لا يدعم مشاركة الملف مباشرة. يمكنك التنزيل أو مشاركة الرابط.");
-        return false;
+        if (navigator.share) {{
+          await navigator.share({{
+            title: "بطاقة التهنئة",
+            text: "بطاقة التهنئة",
+            url: absoluteImageUrl
+          }});
+          setNote("تم فتح المشاركة");
+          return;
+        }}
+
+        window.open(absoluteImageUrl, "_blank");
+        setNote("تم فتح الصورة. شاركها من الجهاز.");
       }} catch (err) {{
-        console.log("share file failed", err);
-        setNote("تعذر فتح مشاركة الملف مباشرة. سيتم تجربة مشاركة الرابط.");
-        return false;
+        console.log("share failed", err);
+        setNote("اضغط مرة أخرى، أو شارك الصورة بعد فتحها.");
+      }} finally {{
+        shareBtn.disabled = false;
       }}
     }}
 
-    shareBtn.addEventListener('click', async () => {{
-      const okFile = await shareFileIfSupported();
-      if (okFile) return;
+    shareBtn.addEventListener("click", doShare);
 
-      const okUrl = await fallbackShareUrl();
-      if (okUrl) {{
-        setNote("تم فتح مشاركة الرابط");
-        return;
+    window.addEventListener("load", async () => {{
+      try {{
+        await doShare();
+      }} catch (e) {{
+        console.log("auto share blocked", e);
       }}
-
-      setNote("هذا الجهاز لا يدعم المشاركة المباشرة. اضغط تنزيل البطاقة ثم شاركها من الجهاز.");
     }});
   </script>
 </body>
@@ -2215,7 +2222,7 @@ async def startup():
             asyncio.create_task(worker_loop(queue_name, i + 1))
 
     log.info(
-        "App started (workers_per_queue=%s, max_queue=%s, gen_concurrency_per_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s, instance=%s, output_folder=%s, public_base_url=%s, public_cards_dir=%s)",
+        "App started (workers_per_queue=%s, max_queue=%s, gen_concurrency_per_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s, instance=%s, output_folder=%s, public_base_url=%s, amro_share_ttl=%s)",
         WORKER_COUNT,
         MAX_QUEUE_SIZE,
         GEN_CONCURRENCY,
@@ -2226,7 +2233,7 @@ async def startup():
         INSTANCE_NAME,
         OUTPUT_FOLDER_ID or "not-set",
         guess_base_url() or "not-set",
-        str(PUBLIC_CARDS_DIR),
+        AMRO_SHARE_TTL_SECONDS,
     )
 
     log.info("Active bots on this instance: %s", ", ".join(BOTS.keys()))
@@ -2248,7 +2255,7 @@ def home():
         "active_bots": list(BOTS.keys()),
         "output_folder_set": bool(OUTPUT_FOLDER_ID),
         "public_base_url": guess_base_url(),
-        "public_cards_dir": str(PUBLIC_CARDS_DIR),
+        "amro_share_items": len(AMRO_SHARE_STORE),
         "queues": {
             QUEUE_ARABIA_WARD: {
                 "bots": ["alarabia", "kounuz_alward"],
