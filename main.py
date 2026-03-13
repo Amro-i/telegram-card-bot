@@ -1,4 +1,3 @@
-```python
 import os
 import json
 import time
@@ -2795,4 +2794,3 @@ async def webhook_kounuz_alward(req: Request):
 @app.post("/webhook/amro")
 async def webhook_amro(req: Request):
     return await handle_webhook(req, "amro")
-```
