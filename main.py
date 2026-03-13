@@ -58,7 +58,7 @@ OUTPUT_FOLDER_ID = os.getenv("OUTPUT_FOLDER_ID", "").strip()
 
 # base url for public mini app / share links
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
-AMRO_SHARE_TTL_SECONDS = int(os.getenv("AMRO_SHARE_TTL_SECONDS", "3600"))
+SHARE_TTL_SECONDS = int(os.getenv("SHARE_TTL_SECONDS", "3600"))
 
 # ---------------------------
 # Google (shared)
@@ -126,15 +126,14 @@ TEMPLATE_SLIDES_ID_AMRO_VERTICAL_1 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL
 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2", "").strip()
 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3", "").strip()
 
-# preview images for Amro bot via Telegram file_id
+# preview images via Telegram file_id
 AMRO_PREVIEW_SQUARE = os.getenv("AMRO_PREVIEW_SQUARE", "").strip()
 AMRO_PREVIEW_VERTICAL = os.getenv("AMRO_PREVIEW_VERTICAL", "").strip()
 
-TemplateField = Union[str, List[str]]
 BOTS_CONFIG_JSON = os.getenv("BOTS_CONFIG_JSON", "").strip()
 
-# share store for Amro mini app
-AMRO_SHARE_STORE: Dict[str, Dict[str, Any]] = {}
+# generic share store for all bots
+SHARE_STORE: Dict[str, Dict[str, Any]] = {}
 
 
 def _default_bots() -> Dict[str, Dict[str, Any]]:
@@ -388,13 +387,6 @@ def tg_send_message(bot_token: str, chat_id: str, text: str, reply_markup: Optio
         return None
 
 
-def tg_edit_message(bot_token: str, chat_id: str, message_id: int, text: str, reply_markup: Optional[dict] = None) -> None:
-    payload = {"chat_id": chat_id, "message_id": message_id, "text": text}
-    if reply_markup is not None:
-        payload["reply_markup"] = json.dumps(reply_markup)
-    tg(bot_token, "editMessageText", payload)
-
-
 def tg_answer_callback(bot_token: str, callback_query_id: str) -> None:
     if callback_query_id:
         tg(bot_token, "answerCallbackQuery", {"callback_query_id": callback_query_id})
@@ -452,10 +444,6 @@ async def atg_send_message(bot_token: str, chat_id: str, text: str, reply_markup
     return await asyncio.to_thread(tg_send_message, bot_token, chat_id, text, reply_markup)
 
 
-async def atg_edit_message(bot_token: str, chat_id: str, message_id: int, text: str, reply_markup: Optional[dict] = None) -> None:
-    await asyncio.to_thread(tg_edit_message, bot_token, chat_id, message_id, text, reply_markup)
-
-
 async def atg_answer_callback(bot_token: str, callback_query_id: str) -> None:
     await asyncio.to_thread(tg_answer_callback, bot_token, callback_query_id)
 
@@ -485,7 +473,7 @@ async def atg_send_photo_by_file_id(
 
 
 # ---------------------------
-# Amro mini app share helpers
+# Generic share helpers
 # ---------------------------
 def guess_base_url() -> str:
     if PUBLIC_BASE_URL:
@@ -503,59 +491,53 @@ def make_public_url(path: str) -> str:
     return f"{base}{path}"
 
 
-def cleanup_amro_share_store() -> None:
+def cleanup_share_store() -> None:
     now = time.time()
-    expired = [k for k, v in AMRO_SHARE_STORE.items() if float(v.get("expires_at", 0)) <= now]
+    expired = [k for k, v in SHARE_STORE.items() if float(v.get("expires_at", 0)) <= now]
     for k in expired:
-        AMRO_SHARE_STORE.pop(k, None)
+        SHARE_STORE.pop(k, None)
 
 
-def create_amro_share_token(png_bytes: bytes, *, chat_id: str, user_id: str) -> str:
-    cleanup_amro_share_store()
+def create_share_token(png_bytes: bytes, *, chat_id: str, user_id: str, bot_key: str) -> str:
+    cleanup_share_store()
     token = secrets.token_urlsafe(18)
-    AMRO_SHARE_STORE[token] = {
+    SHARE_STORE[token] = {
         "png_bytes": png_bytes,
         "chat_id": chat_id,
         "user_id": user_id,
+        "bot_key": bot_key,
         "created_at": time.time(),
-        "expires_at": time.time() + AMRO_SHARE_TTL_SECONDS,
+        "expires_at": time.time() + SHARE_TTL_SECONDS,
     }
     return token
 
 
-def get_amro_share_item(token: str) -> Optional[Dict[str, Any]]:
-    cleanup_amro_share_store()
-    item = AMRO_SHARE_STORE.get(token)
+def get_share_item(token: str) -> Optional[Dict[str, Any]]:
+    cleanup_share_store()
+    item = SHARE_STORE.get(token)
     if not item:
         return None
     if float(item.get("expires_at", 0)) <= time.time():
-        AMRO_SHARE_STORE.pop(token, None)
+        SHARE_STORE.pop(token, None)
         return None
     return item
 
 
-def kb_amro_share_webapp(webapp_url: str) -> dict:
+def share_btn_text(is_ar_only: bool) -> str:
+    return "📤 مشاركة البطاقة" if is_ar_only else "📤 مشاركة البطاقة / Share Card"
+
+
+def start_btn_text(is_ar_only: bool) -> str:
+    return "↩️ البداية" if is_ar_only else "↩️ Start / ابدأ"
+
+
+def kb_after_ready_with_share(is_ar_only: bool, webapp_url: str) -> dict:
     return {
         "inline_keyboard": [
-            [
-                {
-                    "text": "📤 مشاركة البطاقة",
-                    "web_app": {"url": webapp_url}
-                }
-            ],
-            [
-                {"text": "↩️ البداية", "callback_data": "START"}
-            ],
+            [{"text": share_btn_text(is_ar_only), "web_app": {"url": webapp_url}}],
+            [{"text": start_btn_text(is_ar_only), "callback_data": "START"}],
         ]
     }
-
-
-def msg_amro_share_webapp() -> str:
-    return (
-        "للمشاركة السريعة:\n\n"
-        "اضغط زر (مشاركة البطاقة)، وإذا لم تظهر نافذة المشاركة مباشرة "
-        "فاضغط الزر الكبير داخل الصفحة."
-    )
 
 
 # ---------------------------
@@ -814,15 +796,6 @@ def ar_kb_confirm() -> dict:
     }
 
 
-def ar_kb_after_ready() -> dict:
-    return {
-        "inline_keyboard": [
-            [{"text": "إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START_CARD"}],
-            [{"text": "↩️ Start / ابدأ", "callback_data": "START"}],
-        ]
-    }
-
-
 def hz_msg_welcome(bot_key: str) -> str:
     br = get_branding(bot_key)
     return br.get("welcome_ar", "مرحباً بك")
@@ -929,10 +902,6 @@ def kb_preview_ar(supports_vertical: bool, design_count: int) -> dict:
     return {"inline_keyboard": rows}
 
 
-def hz_kb_after_ready() -> dict:
-    return {"inline_keyboard": [[{"text": "↩️ البداية", "callback_data": "START"}]]}
-
-
 # ---------------------------
 # Session
 # ---------------------------
@@ -961,7 +930,6 @@ class Session:
     chosen_design: int = 1
     last_name_ar: str = ""
     last_gen_ts: float = 0
-    creating_msg_id: int = 0
     recent_fps: Dict[str, float] = field(default_factory=dict)
     user_id: str = ""
     username: str = ""
@@ -989,7 +957,6 @@ def reset_session(s: Session, keep_last_name: bool = True):
     s.name_en = ""
     s.chosen_size = ""
     s.chosen_design = 1
-    s.creating_msg_id = 0
     if not keep_last_name:
         s.last_name_ar = ""
 
@@ -1133,26 +1100,28 @@ async def process_job(job: Job):
 
         await atg_send_photo(bot_token, job.chat_id, png_bytes, caption="", reply_markup=None)
 
-        amro_share_url = ""
-        if job.bot_key == "amro":
-            share_token = create_amro_share_token(
-                png_bytes,
-                chat_id=job.chat_id,
-                user_id=job.user_id,
-            )
-            amro_share_url = make_public_url(f"/amro/share-mini/{share_token}")
+        share_token = create_share_token(
+            png_bytes,
+            chat_id=job.chat_id,
+            user_id=job.user_id,
+            bot_key=job.bot_key,
+        )
+        share_url = make_public_url(f"/share-mini/{share_token}")
+        is_ar_only = bot["lang_mode"] == "AR_ONLY"
 
-        if bot["lang_mode"] == "AR_EN":
-            await atg_send_message(bot_token, job.chat_id, ar_msg_ready(), ar_kb_after_ready())
-        else:
-            await atg_send_message(bot_token, job.chat_id, hz_msg_ready(), hz_kb_after_ready())
-
-        if job.bot_key == "amro" and amro_share_url:
+        if is_ar_only:
             await atg_send_message(
                 bot_token,
                 job.chat_id,
-                msg_amro_share_webapp(),
-                kb_amro_share_webapp(amro_share_url),
+                hz_msg_ready(),
+                kb_after_ready_with_share(True, share_url),
+            )
+        else:
+            await atg_send_message(
+                bot_token,
+                job.chat_id,
+                ar_msg_ready(),
+                kb_after_ready_with_share(False, share_url),
             )
 
         await asyncio.to_thread(
@@ -2183,11 +2152,11 @@ async def handle_webhook(req: Request, bot_key: str):
 
 
 # ---------------------------
-# Amro mini app routes
+# Generic share routes
 # ---------------------------
-@app.get("/amro/share-file/{token}.png")
-async def amro_share_file(token: str):
-    item = get_amro_share_item(token)
+@app.get("/share-file/{token}.png")
+async def share_file(token: str):
+    item = get_share_item(token)
     if not item:
         raise HTTPException(status_code=404, detail="Card not found or expired")
 
@@ -2196,18 +2165,18 @@ async def amro_share_file(token: str):
         media_type="image/png",
         headers={
             "Cache-Control": "private, max-age=300",
-            "Content-Disposition": f'inline; filename="amro-card-{token}.png"',
+            "Content-Disposition": f'inline; filename="card-{token}.png"',
         },
     )
 
 
-@app.get("/amro/share-mini/{token}", response_class=HTMLResponse)
-async def amro_share_mini(token: str):
-    item = get_amro_share_item(token)
+@app.get("/share-mini/{token}", response_class=HTMLResponse)
+async def share_mini(token: str):
+    item = get_share_item(token)
     if not item:
         raise HTTPException(status_code=404, detail="Card not found or expired")
 
-    image_url = make_public_url(f"/amro/share-file/{token}.png")
+    image_url = make_public_url(f"/share-file/{token}.png")
 
     html = f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -2299,20 +2268,13 @@ async def amro_share_mini(token: str):
       color: #64748b;
       min-height: 30px;
     }}
-    .tiny {{
-      text-align: center;
-      margin-top: 8px;
-      font-size: 13px;
-      color: #94a3b8;
-      line-height: 1.8;
-    }}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <div class="title">مشاركة البطاقة</div>
-      <div class="sub">اضغط الزر لفتح المشاركة مباشرة</div>
+      <div class="sub">اضغط الزر لمشاركة الصورة بدون أي نص تلقائي</div>
 
       <div class="preview">
         <img src="{image_url}" alt="بطاقة التهنئة" />
@@ -2320,7 +2282,6 @@ async def amro_share_mini(token: str):
 
       <button id="shareBtn" class="btn">📤 مشاركة البطاقة</button>
       <div id="note" class="note"></div>
-      <div class="tiny">إذا لم تعمل المشاركة على هذا الجهاز، سيتم فتح واتساب</div>
     </div>
   </div>
 
@@ -2351,13 +2312,7 @@ async def amro_share_mini(token: str):
       }});
       if (!res.ok) throw new Error("failed_to_fetch_image");
       const blob = await res.blob();
-      return new File([blob], "amro-card.png", {{ type: blob.type || "image/png" }});
-    }}
-
-    function openWhatsAppFallback() {{
-      const text = "بطاقة التهنئة\\n" + absoluteImageUrl;
-      const waUrl = "https://wa.me/?text=" + encodeURIComponent(text);
-      window.location.href = waUrl;
+      return new File([blob], "card.png", {{ type: blob.type || "image/png" }});
     }}
 
     async function doShare() {{
@@ -2371,44 +2326,25 @@ async def amro_share_mini(token: str):
 
         if (navigator.canShare && navigator.canShare({{ files: [file] }})) {{
           await navigator.share({{
-            files: [file],
-            title: "بطاقة التهنئة",
-            text: "بطاقة التهنئة"
+            files: [file]
           }});
           setNote("");
           return;
         }}
 
-        if (navigator.share) {{
-          await navigator.share({{
-            title: "بطاقة التهنئة",
-            text: "بطاقة التهنئة",
-            url: absoluteImageUrl
-          }});
-          setNote("");
-          return;
-        }}
-
-        openWhatsAppFallback();
-        setNote("");
+        // لا نرسل أي نص تلقائي. إذا لم يدعم الجهاز مشاركة الملفات
+        // نفتح الصورة فقط ليقوم المستخدم بمشاركتها يدويًا.
+        window.open(absoluteImageUrl, "_blank");
+        setNote("هذا الجهاز لا يدعم المشاركة المباشرة للملف. تم فتح الصورة فقط.");
       }} catch (err) {{
         console.log("share failed", err);
-
         const errName = (err && err.name) ? err.name : "";
+
         if (errName === "AbortError") {{
           setNote("");
-          return;
+        }} else {{
+          setNote("تعذر فتح المشاركة");
         }}
-
-        try {{
-          openWhatsAppFallback();
-          setNote("");
-          return;
-        }} catch (waErr) {{
-          console.log("whatsapp fallback failed", waErr);
-        }}
-
-        setNote("تعذر فتح المشاركة");
       }} finally {{
         isBusy = false;
         shareBtn.disabled = false;
@@ -2435,7 +2371,7 @@ async def startup():
             asyncio.create_task(worker_loop(queue_name, i + 1))
 
     log.info(
-        "App started (workers_per_queue=%s, max_queue=%s, gen_concurrency_per_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s, instance=%s, output_folder=%s, public_base_url=%s, amro_share_ttl=%s)",
+        "App started (workers_per_queue=%s, max_queue=%s, gen_concurrency_per_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s, instance=%s, output_folder=%s, public_base_url=%s, share_ttl=%s)",
         WORKER_COUNT,
         MAX_QUEUE_SIZE,
         GEN_CONCURRENCY,
@@ -2446,7 +2382,7 @@ async def startup():
         INSTANCE_NAME,
         OUTPUT_FOLDER_ID or "not-set",
         guess_base_url() or "not-set",
-        AMRO_SHARE_TTL_SECONDS,
+        SHARE_TTL_SECONDS,
     )
 
     log.info("Active bots on this instance: %s", ", ".join(BOTS.keys()))
@@ -2468,7 +2404,7 @@ def home():
         "active_bots": list(BOTS.keys()),
         "output_folder_set": bool(OUTPUT_FOLDER_ID),
         "public_base_url": guess_base_url(),
-        "amro_share_items": len(AMRO_SHARE_STORE),
+        "share_items": len(SHARE_STORE),
         "queues": {
             QUEUE_ARABIA_WARD: {
                 "bots": ["alarabia", "kounuz_alward"],
