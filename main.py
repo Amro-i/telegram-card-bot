@@ -53,10 +53,10 @@ INSTANCE_NAME = os.getenv("INSTANCE_NAME", "local").strip() or "local"
 # Which bots are active on this server
 ACTIVE_BOTS = os.getenv("ACTIVE_BOTS", "").strip()
 
-# NEW: temp folder where copied presentations are created
+# temp folder where copied presentations are created
 OUTPUT_FOLDER_ID = os.getenv("OUTPUT_FOLDER_ID", "").strip()
 
-# NEW: base url for public mini app / share links
+# base url for public mini app / share links
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
 AMRO_SHARE_TTL_SECONDS = int(os.getenv("AMRO_SHARE_TTL_SECONDS", "3600"))
 
@@ -84,7 +84,6 @@ SHEET_ID = os.getenv("SHEET_ID", "").strip()
 SHEET_TAB = os.getenv("SHEET_TAB", "Tracking").strip()
 
 # IMPORTANT:
-# This must match your current sheet headers exactly:
 # A Timestamp
 # B Bot
 # C Status
@@ -345,7 +344,7 @@ def safe_sheet_append_row(values: List[str]) -> None:
 def sheet_append_row(values: List[str]) -> None:
     if not SHEET_ID:
         return
-    drive, slides, sheets, creds = build_clients()
+    _, _, sheets, _ = build_clients()
     rng = f"{SHEET_TAB}!A1"
     body = {"values": [normalize_sheet_row(values)]}
     google_execute_with_retry(
@@ -366,6 +365,9 @@ def sheet_append_row(values: List[str]) -> None:
 # ---------------------------
 # Telegram helpers
 # ---------------------------
+TG_API = "https://api.telegram.org/bot{}/{}"
+
+
 def tg(bot_token: str, method: str, data: Optional[dict] = None, files: Optional[dict] = None) -> requests.Response:
     url = TG_API.format(bot_token, method)
     r = request_with_retry("POST", url, timeout=HTTP_TIMEOUT, data=data, files=files)
@@ -443,6 +445,43 @@ def tg_send_photo_by_file_id(
     if reply_markup is not None:
         data["reply_markup"] = json.dumps(reply_markup)
     tg(bot_token, "sendPhoto", data=data)
+
+
+# Async wrappers to avoid blocking event loop
+async def atg_send_message(bot_token: str, chat_id: str, text: str, reply_markup: Optional[dict] = None) -> Optional[int]:
+    return await asyncio.to_thread(tg_send_message, bot_token, chat_id, text, reply_markup)
+
+
+async def atg_edit_message(bot_token: str, chat_id: str, message_id: int, text: str, reply_markup: Optional[dict] = None) -> None:
+    await asyncio.to_thread(tg_edit_message, bot_token, chat_id, message_id, text, reply_markup)
+
+
+async def atg_answer_callback(bot_token: str, callback_query_id: str) -> None:
+    await asyncio.to_thread(tg_answer_callback, bot_token, callback_query_id)
+
+
+async def atg_toast(bot_token: str, callback_query_id: str, text: str, show_alert: bool = False) -> None:
+    await asyncio.to_thread(tg_toast, bot_token, callback_query_id, text, show_alert)
+
+
+async def atg_send_photo(
+    bot_token: str,
+    chat_id: str,
+    png_bytes: bytes,
+    caption: str = "",
+    reply_markup: Optional[dict] = None
+) -> None:
+    await asyncio.to_thread(tg_send_photo, bot_token, chat_id, png_bytes, caption, reply_markup)
+
+
+async def atg_send_photo_by_file_id(
+    bot_token: str,
+    chat_id: str,
+    file_id: str,
+    caption: str = "",
+    reply_markup: Optional[dict] = None
+) -> None:
+    await asyncio.to_thread(tg_send_photo_by_file_id, bot_token, chat_id, file_id, caption, reply_markup)
 
 
 # ---------------------------
@@ -960,7 +999,7 @@ def bump_seq(s: Session):
 
 
 # ---------------------------
-# Queue groups (3 official queues)
+# Queue groups
 # ---------------------------
 QUEUE_ARABIA_WARD = "queue_arabia_ward"
 QUEUE_HAFEZ_FALAH = "queue_hafez_falah"
@@ -1049,9 +1088,9 @@ async def _progress_ping(bot_token: str, bot_key: str, chat_id: str, seq: int):
             return
     bot = BOTS[bot_key]
     if bot.get("lang_mode") == "AR_EN":
-        tg_send_message(bot_token, chat_id, ar_msg_still_working())
+        await atg_send_message(bot_token, chat_id, ar_msg_still_working())
     else:
-        tg_send_message(bot_token, chat_id, hz_msg_still_working())
+        await atg_send_message(bot_token, chat_id, hz_msg_still_working())
 
 
 def size_label_ar(size_key: str) -> str:
@@ -1092,7 +1131,7 @@ async def process_job(job: Job):
                 log.info("Skip stale result for %s", job.chat_id)
                 return
 
-        tg_send_photo(bot_token, job.chat_id, png_bytes, caption="", reply_markup=None)
+        await atg_send_photo(bot_token, job.chat_id, png_bytes, caption="", reply_markup=None)
 
         amro_share_url = ""
         if job.bot_key == "amro":
@@ -1104,34 +1143,37 @@ async def process_job(job: Job):
             amro_share_url = make_public_url(f"/amro/share-mini/{share_token}")
 
         if bot["lang_mode"] == "AR_EN":
-            tg_send_message(bot_token, job.chat_id, ar_msg_ready(), ar_kb_after_ready())
+            await atg_send_message(bot_token, job.chat_id, ar_msg_ready(), ar_kb_after_ready())
         else:
-            tg_send_message(bot_token, job.chat_id, hz_msg_ready(), hz_kb_after_ready())
+            await atg_send_message(bot_token, job.chat_id, hz_msg_ready(), hz_kb_after_ready())
 
         if job.bot_key == "amro" and amro_share_url:
-            tg_send_message(
+            await atg_send_message(
                 bot_token,
                 job.chat_id,
                 msg_amro_share_webapp(),
                 kb_amro_share_webapp(amro_share_url),
             )
 
-        safe_sheet_append_row([
-            now_ts_riyadh(),
-            job.bot_key,
-            "SUCCESS",
-            job.name_ar or "",
-            job.name_en or "",
-            job.chat_id or "",
-            job.user_id or "",
-            job.username or "",
-            size_label_ar(job.size_key),
-            str(job.design_number or 1),
-            "",
-            INSTANCE_NAME,
-            f"{queue_wait_sec:.2f}",
-            f"{gen_sec:.2f}",
-        ])
+        await asyncio.to_thread(
+            safe_sheet_append_row,
+            [
+                now_ts_riyadh(),
+                job.bot_key,
+                "SUCCESS",
+                job.name_ar or "",
+                job.name_en or "",
+                job.chat_id or "",
+                job.user_id or "",
+                job.username or "",
+                size_label_ar(job.size_key),
+                str(job.design_number or 1),
+                "",
+                INSTANCE_NAME,
+                f"{queue_wait_sec:.2f}",
+                f"{gen_sec:.2f}",
+            ],
+        )
 
         async with s.lock:
             s.last_name_ar = job.name_ar or s.last_name_ar
@@ -1142,26 +1184,29 @@ async def process_job(job: Job):
             gen_sec = max(0.0, time.time() - gen_started_at)
 
         if bot["lang_mode"] == "AR_EN":
-            tg_send_message(bot_token, job.chat_id, ar_msg_error(str(e)), ar_kb_start_again())
+            await atg_send_message(bot_token, job.chat_id, ar_msg_error(str(e)), ar_kb_start_again())
         else:
-            tg_send_message(bot_token, job.chat_id, hz_msg_error(str(e)), hz_kb_start_again())
+            await atg_send_message(bot_token, job.chat_id, hz_msg_error(str(e)), hz_kb_start_again())
 
-        safe_sheet_append_row([
-            now_ts_riyadh(),
-            job.bot_key,
-            "ERROR",
-            job.name_ar or "",
-            job.name_en or "",
-            job.chat_id or "",
-            job.user_id or "",
-            job.username or "",
-            size_label_ar(job.size_key),
-            str(job.design_number or 1),
-            str(e)[:400],
-            INSTANCE_NAME,
-            f"{queue_wait_sec:.2f}",
-            f"{gen_sec:.2f}",
-        ])
+        await asyncio.to_thread(
+            safe_sheet_append_row,
+            [
+                now_ts_riyadh(),
+                job.bot_key,
+                "ERROR",
+                job.name_ar or "",
+                job.name_en or "",
+                job.chat_id or "",
+                job.user_id or "",
+                job.username or "",
+                size_label_ar(job.size_key),
+                str(job.design_number or 1),
+                str(e)[:400],
+                INSTANCE_NAME,
+                f"{queue_wait_sec:.2f}",
+                f"{gen_sec:.2f}",
+            ],
+        )
 
         async with s.lock:
             reset_session(s, keep_last_name=True)
@@ -1182,7 +1227,7 @@ def export_png(pres_id: str, slide_object_id: str, creds) -> bytes:
 
 
 def generate_card_png(template_id: str, name_ar: str, name_en: str, lang_mode: str) -> bytes:
-    drive, slides, sheets, creds = build_clients()
+    drive, slides, _, creds = build_clients()
     pres_id = None
 
     try:
@@ -1600,164 +1645,212 @@ def pick_template_id(bot: Dict[str, Any], size_key: str, design_idx_1based: int)
 # ---------------------------
 # Core handler
 # ---------------------------
+GEN_COMMANDS = {"GEN", "CONFIRM_GEN"}
+
+
 async def handle_webhook(req: Request, bot_key: str):
-    if bot_key not in BOTS:
-        return {"ok": True, "message": f"bot '{bot_key}' is not active on this server"}
+    try:
+        if bot_key not in BOTS:
+            return {"ok": True, "message": f"bot '{bot_key}' is not active on this server"}
 
-    bot = BOTS[bot_key]
-    bot_token = bot["token"]
-    lang_mode = bot.get("lang_mode")
-    is_ar_only = (lang_mode == "AR_ONLY")
-    supports_vertical = bool(bot.get("supports_vertical"))
-    design_count = int(bot.get("design_count") or 1)
-    queue_name = get_queue_name_for_bot(bot_key)
-    job_queue = get_queue_for_bot(bot_key)
+        bot = BOTS[bot_key]
+        bot_token = bot["token"]
+        lang_mode = bot.get("lang_mode")
+        is_ar_only = (lang_mode == "AR_ONLY")
+        supports_vertical = bool(bot.get("supports_vertical"))
+        design_count = int(bot.get("design_count") or 1)
+        queue_name = get_queue_name_for_bot(bot_key)
+        job_queue = get_queue_for_bot(bot_key)
 
-    data = await req.json()
-    update_id, chat_id, text_raw, msg_id, cq_id, user_id, username = extract_update(data)
+        data = await req.json()
+        update_id, chat_id, text_raw, msg_id, cq_id, user_id, username = extract_update(data)
 
-    if not chat_id:
-        return {"ok": True}
-
-    s = get_session(bot_key, chat_id)
-
-    async with s.lock:
-        if user_id:
-            s.user_id = user_id
-        if username:
-            s.username = username
-
-    text = clean_text(text_raw)
-
-    async with s.lock:
-        current_state = s.state
-        current_chosen_size = s.chosen_size
-
-    cmd = infer_command(
-        text=text,
-        state=current_state,
-        is_ar_only=is_ar_only,
-        supports_vertical=supports_vertical,
-        design_count=design_count,
-        chosen_size=current_chosen_size,
-    )
-
-    fp = f"{update_id}|{msg_id}|{cq_id or ''}|{cmd}|{text}"
-    now = time.time()
-    async with s.lock:
-        if update_id and s.last_update_id >= update_id:
+        if not chat_id:
             return {"ok": True}
 
-        if s.recent_fps:
-            stale = [k for k, ts in s.recent_fps.items() if (now - ts) > FP_DEDUP_SECONDS]
-            for k in stale:
-                s.recent_fps.pop(k, None)
+        s = get_session(bot_key, chat_id)
 
-        if fp in s.recent_fps:
-            return {"ok": True}
-        s.recent_fps[fp] = now
+        async with s.lock:
+            if user_id:
+                s.user_id = user_id
+            if username:
+                s.username = username
 
-        if update_id:
-            s.last_update_id = update_id
+        text = clean_text(text_raw)
 
-    if cq_id:
-        tg_answer_callback(bot_token, cq_id)
+        async with s.lock:
+            current_state = s.state
+            current_chosen_size = s.chosen_size
 
-    async with s.lock:
-        if s.state == STATE_CREATING and cmd in GEN_COMMANDS:
+        cmd = infer_command(
+            text=text,
+            state=current_state,
+            is_ar_only=is_ar_only,
+            supports_vertical=supports_vertical,
+            design_count=design_count,
+            chosen_size=current_chosen_size,
+        )
+
+        fp = f"{update_id}|{msg_id}|{cq_id or ''}|{cmd}|{text}"
+        now = time.time()
+
+        async with s.lock:
+            if update_id and s.last_update_id >= update_id:
+                return {"ok": True}
+
+            if s.recent_fps:
+                stale = [k for k, ts in s.recent_fps.items() if (now - ts) > FP_DEDUP_SECONDS]
+                for k in stale:
+                    s.recent_fps.pop(k, None)
+
+            if fp in s.recent_fps:
+                return {"ok": True}
+
+            s.recent_fps[fp] = now
+
+            if update_id:
+                s.last_update_id = update_id
+
+        if cq_id:
+            try:
+                await atg_answer_callback(bot_token, cq_id)
+            except Exception as e:
+                log.warning("answerCallbackQuery failed: %s", repr(e))
+
+        async with s.lock:
+            state_now = s.state
+            last_gen_ts = s.last_gen_ts
+
+        if state_now == STATE_CREATING and cmd in GEN_COMMANDS:
             if cq_id:
-                tg_toast(bot_token, cq_id, "⏳ جاري توليد البطاقة... الرجاء الانتظار", show_alert=False)
+                try:
+                    await atg_toast(bot_token, cq_id, "⏳ جاري توليد البطاقة... الرجاء الانتظار", False)
+                except Exception as e:
+                    log.warning("tg_toast failed: %s", repr(e))
             return {"ok": True}
 
         if cmd in GEN_COMMANDS:
-            if (now - s.last_gen_ts) < RATE_LIMIT_SECONDS:
-                remaining = RATE_LIMIT_SECONDS - (now - s.last_gen_ts)
+            if (now - last_gen_ts) < RATE_LIMIT_SECONDS:
+                remaining = RATE_LIMIT_SECONDS - (now - last_gen_ts)
                 if cq_id:
-                    tg_toast(bot_token, cq_id, f"⏳ انتظر {int(remaining)} ثانية ثم حاول", show_alert=False)
+                    try:
+                        await atg_toast(bot_token, cq_id, f"⏳ انتظر {int(remaining)} ثانية ثم حاول", False)
+                    except Exception as e:
+                        log.warning("tg_toast rate-limit failed: %s", repr(e))
                 else:
-                    tg_send_message(bot_token, s.chat_id, msg_rate_limited(is_ar_only, remaining))
+                    await atg_send_message(bot_token, s.chat_id, msg_rate_limited(is_ar_only, remaining))
                 return {"ok": True}
-            s.last_gen_ts = now
+
+            async with s.lock:
+                s.last_gen_ts = now
 
         if cmd == "CANCEL":
-            bump_seq(s)
-            reset_session(s, keep_last_name=True)
+            async with s.lock:
+                bump_seq(s)
+                reset_session(s, keep_last_name=True)
+                s.state = STATE_MENU
+
             if not is_ar_only:
-                tg_send_message(bot_token, s.chat_id, ar_msg_welcome(bot_key), ar_kb_start_card())
+                await atg_send_message(bot_token, s.chat_id, ar_msg_welcome(bot_key), ar_kb_start_card())
             else:
-                tg_send_message(bot_token, s.chat_id, hz_msg_welcome(bot_key), hz_kb_start_card())
-            s.state = STATE_MENU
+                await atg_send_message(bot_token, s.chat_id, hz_msg_welcome(bot_key), hz_kb_start_card())
             return {"ok": True}
 
         if cmd == "START":
-            bump_seq(s)
-            reset_session(s, keep_last_name=True)
+            async with s.lock:
+                bump_seq(s)
+                reset_session(s, keep_last_name=True)
+                s.state = STATE_MENU
+
             if not is_ar_only:
-                tg_send_message(bot_token, s.chat_id, ar_msg_welcome(bot_key), ar_kb_start_card())
+                await atg_send_message(bot_token, s.chat_id, ar_msg_welcome(bot_key), ar_kb_start_card())
             else:
-                tg_send_message(bot_token, s.chat_id, hz_msg_welcome(bot_key), hz_kb_start_card())
-            s.state = STATE_MENU
+                await atg_send_message(bot_token, s.chat_id, hz_msg_welcome(bot_key), hz_kb_start_card())
             return {"ok": True}
 
         if cmd == "START_CARD":
-            bump_seq(s)
-            s.state = STATE_WAIT_AR
-            s.name_ar = ""
-            s.name_en = ""
-            s.chosen_size = ""
-            s.chosen_design = 1
+            async with s.lock:
+                bump_seq(s)
+                s.state = STATE_WAIT_AR
+                s.name_ar = ""
+                s.name_en = ""
+                s.chosen_size = ""
+                s.chosen_design = 1
 
             if not is_ar_only:
-                tg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
+                await atg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
             else:
-                tg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
+                await atg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
             return {"ok": True}
 
-        if s.state == STATE_WAIT_AR:
+        async with s.lock:
+            state_now = s.state
+
+        if state_now == STATE_WAIT_AR:
             ok, val = validate_ar(text)
             if not ok:
                 if not is_ar_only:
-                    tg_send_message(bot_token, s.chat_id, ar_msg_invalid_ar(val))
+                    await atg_send_message(bot_token, s.chat_id, ar_msg_invalid_ar(val))
                 else:
-                    tg_send_message(bot_token, s.chat_id, hz_msg_invalid_ar(val), hz_kb_start_again())
+                    await atg_send_message(bot_token, s.chat_id, hz_msg_invalid_ar(val), hz_kb_start_again())
                 return {"ok": True}
 
-            s.name_ar = val
+            async with s.lock:
+                s.name_ar = val
+                if not is_ar_only:
+                    s.state = STATE_WAIT_EN
+                else:
+                    s.state = STATE_REVIEW_NAME
 
             if not is_ar_only:
-                s.state = STATE_WAIT_EN
-                tg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
-                return {"ok": True}
-
-            s.state = STATE_REVIEW_NAME
-            tg_send_message(bot_token, s.chat_id, hz_msg_review_name(s.name_ar), hz_kb_review_name())
+                await atg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
+            else:
+                await atg_send_message(bot_token, s.chat_id, hz_msg_review_name(val), hz_kb_review_name())
             return {"ok": True}
 
-        if s.state == STATE_WAIT_EN and (not is_ar_only):
+        async with s.lock:
+            state_now = s.state
+            name_ar_now = s.name_ar
+
+        if state_now == STATE_WAIT_EN and (not is_ar_only):
             if cmd == "EDIT_AR":
-                s.state = STATE_WAIT_AR
-                tg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
+                async with s.lock:
+                    s.state = STATE_WAIT_AR
+                await atg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
                 return {"ok": True}
 
             ok, val = validate_en(text)
             if not ok:
-                tg_send_message(bot_token, s.chat_id, ar_msg_invalid_en(val), ar_kb_wait_en())
+                await atg_send_message(bot_token, s.chat_id, ar_msg_invalid_en(val), ar_kb_wait_en())
                 return {"ok": True}
 
-            s.name_en = val
-            s.state = STATE_CONFIRM
-            tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
+            async with s.lock:
+                s.name_en = val
+                s.state = STATE_CONFIRM
+
+            await atg_send_message(
+                bot_token,
+                s.chat_id,
+                ar_msg_confirm(name_ar_now, val),
+                ar_kb_confirm(),
+            )
             return {"ok": True}
 
-        if s.state == STATE_REVIEW_NAME and is_ar_only:
+        async with s.lock:
+            state_now = s.state
+            name_ar_now = s.name_ar
+
+        if state_now == STATE_REVIEW_NAME and is_ar_only:
             if cmd == "EDIT_AR":
-                s.state = STATE_WAIT_AR
-                tg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
+                async with s.lock:
+                    s.state = STATE_WAIT_AR
+                await atg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
                 return {"ok": True}
 
             if cmd == "CONFIRM_NAME":
-                s.state = STATE_CHOOSE_SIZE
-                tg_send_message(
+                async with s.lock:
+                    s.state = STATE_CHOOSE_SIZE
+                await atg_send_message(
                     bot_token,
                     s.chat_id,
                     hz_msg_choose_size(supports_vertical),
@@ -1765,35 +1858,53 @@ async def handle_webhook(req: Request, bot_key: str):
                 )
                 return {"ok": True}
 
-            tg_send_message(bot_token, s.chat_id, hz_msg_review_name(s.name_ar), hz_kb_review_name())
+            await atg_send_message(bot_token, s.chat_id, hz_msg_review_name(name_ar_now), hz_kb_review_name())
             return {"ok": True}
 
-        if s.state == STATE_CONFIRM and (not is_ar_only):
+        async with s.lock:
+            state_now = s.state
+            name_ar_now = s.name_ar
+            name_en_now = s.name_en
+            seq_now = s.seq
+
+        if state_now == STATE_CONFIRM and (not is_ar_only):
             if cmd == "EDIT_AR":
-                s.state = STATE_WAIT_AR
-                tg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
+                async with s.lock:
+                    s.state = STATE_WAIT_AR
+                await atg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
                 return {"ok": True}
+
             if cmd == "EDIT_EN":
-                s.state = STATE_WAIT_EN
-                tg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
+                async with s.lock:
+                    s.state = STATE_WAIT_EN
+                await atg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
                 return {"ok": True}
 
             if cmd == "GEN":
                 if job_queue.qsize() >= MAX_QUEUE_SIZE:
-                    tg_send_message(bot_token, s.chat_id, msg_high_load(ar_only=False), ar_kb_start_again())
-                    reset_session(s, keep_last_name=True)
+                    async with s.lock:
+                        reset_session(s, keep_last_name=True)
+                    await atg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        msg_high_load(ar_only=False),
+                        ar_kb_start_again(),
+                    )
                     return {"ok": True}
 
-                s.state = STATE_CREATING
-                tg_send_message(bot_token, s.chat_id, ar_msg_creating())
+                async with s.lock:
+                    s.state = STATE_CREATING
+                    seq_now = s.seq
+
+                await atg_send_message(bot_token, s.chat_id, ar_msg_creating())
 
                 async with _inflight_lock:
-                    key = (bot_key, s.chat_id, s.seq)
+                    key = (bot_key, s.chat_id, seq_now)
                     if key in _inflight:
                         return {"ok": True}
                     _inflight.add(key)
 
-                asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, s.seq))
+                asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, seq_now))
 
                 try:
                     job_queue.put_nowait(
@@ -1802,91 +1913,126 @@ async def handle_webhook(req: Request, bot_key: str):
                             chat_id=s.chat_id,
                             user_id=s.user_id,
                             username=s.username,
-                            name_ar=s.name_ar,
-                            name_en=s.name_en,
+                            name_ar=name_ar_now,
+                            name_en=name_en_now,
                             size_key="SQUARE",
                             design_number=1,
                             template_id=pick_template_id(bot, "SQUARE", 1),
                             requested_at=time.time(),
-                            seq=s.seq,
+                            seq=seq_now,
                             queue_name=queue_name,
                         )
                     )
                 except asyncio.QueueFull:
-                    tg_send_message(bot_token, s.chat_id, msg_high_load(ar_only=False), ar_kb_start_again())
-                    reset_session(s, keep_last_name=True)
+                    async with s.lock:
+                        reset_session(s, keep_last_name=True)
+                    await atg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        msg_high_load(ar_only=False),
+                        ar_kb_start_again(),
+                    )
                     return {"ok": True}
 
                 return {"ok": True}
 
-            tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
+            await atg_send_message(
+                bot_token,
+                s.chat_id,
+                ar_msg_confirm(name_ar_now, name_en_now),
+                ar_kb_confirm(),
+            )
             return {"ok": True}
 
-        if s.state == STATE_CHOOSE_SIZE and is_ar_only:
-            if cmd == "GEN_SQUARE":
-                s.chosen_size = "SQUARE"
-                if design_count > 1:
-                    s.state = STATE_CHOOSE_DESIGN
+        async with s.lock:
+            state_now = s.state
+            name_ar_now = s.name_ar
 
+        if state_now == STATE_CHOOSE_SIZE and is_ar_only:
+            if cmd == "GEN_SQUARE":
+                async with s.lock:
+                    s.chosen_size = "SQUARE"
+                    chosen_size_now = s.chosen_size
+
+                    if design_count > 1:
+                        s.state = STATE_CHOOSE_DESIGN
+                    else:
+                        s.chosen_design = 1
+                        s.state = STATE_PREVIEW_AR
+
+                if design_count > 1:
                     if bot_key == "amro" and AMRO_PREVIEW_SQUARE:
-                        tg_send_photo_by_file_id(
+                        await atg_send_photo_by_file_id(
                             bot_token,
                             s.chat_id,
                             AMRO_PREVIEW_SQUARE,
-                            caption="نماذج التصاميم للمقاس المربع"
+                            "نماذج التصاميم للمقاس المربع"
                         )
 
-                    tg_send_message(
+                    await atg_send_message(
                         bot_token,
                         s.chat_id,
                         hz_msg_choose_design(design_count),
                         kb_choose_design("SQUARE", design_count),
                     )
                 else:
-                    s.chosen_design = 1
-                    s.state = STATE_PREVIEW_AR
-                    tg_send_message(
+                    await atg_send_message(
                         bot_token,
                         s.chat_id,
-                        hz_msg_preview(bot_key, s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                        hz_msg_preview(bot_key, name_ar_now, size_label_ar(chosen_size_now), 1),
                         kb_preview_ar(supports_vertical, design_count),
                     )
                 return {"ok": True}
 
             if cmd == "GEN_VERTICAL" and supports_vertical:
-                s.chosen_size = "VERTICAL"
-                if design_count > 1:
-                    s.state = STATE_CHOOSE_DESIGN
+                async with s.lock:
+                    s.chosen_size = "VERTICAL"
+                    chosen_size_now = s.chosen_size
 
+                    if design_count > 1:
+                        s.state = STATE_CHOOSE_DESIGN
+                    else:
+                        s.chosen_design = 1
+                        s.state = STATE_PREVIEW_AR
+
+                if design_count > 1:
                     if bot_key == "amro" and AMRO_PREVIEW_VERTICAL:
-                        tg_send_photo_by_file_id(
+                        await atg_send_photo_by_file_id(
                             bot_token,
                             s.chat_id,
                             AMRO_PREVIEW_VERTICAL,
-                            caption="نماذج التصاميم للمقاس الطولي"
+                            "نماذج التصاميم للمقاس الطولي"
                         )
 
-                    tg_send_message(
+                    await atg_send_message(
                         bot_token,
                         s.chat_id,
                         hz_msg_choose_design(design_count),
                         kb_choose_design("VERTICAL", design_count),
                     )
                 else:
-                    s.chosen_design = 1
-                    s.state = STATE_PREVIEW_AR
-                    tg_send_message(
+                    await atg_send_message(
                         bot_token,
                         s.chat_id,
-                        hz_msg_preview(bot_key, s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                        hz_msg_preview(bot_key, name_ar_now, size_label_ar(chosen_size_now), 1),
                         kb_preview_ar(supports_vertical, design_count),
                     )
                 return {"ok": True}
 
-            tg_send_message(bot_token, s.chat_id, hz_msg_choose_size(supports_vertical), hz_kb_choose_size(supports_vertical))
+            await atg_send_message(
+                bot_token,
+                s.chat_id,
+                hz_msg_choose_size(supports_vertical),
+                hz_kb_choose_size(supports_vertical),
+            )
             return {"ok": True}
 
-        if s.state == STATE_CHOOSE_DESIGN and is_ar_only:
+        async with s.lock:
+            state_now = s.state
+            name_ar_now = s.name_ar
+            chosen_size_now = s.chosen_size
+
+        if state_now == STATE_CHOOSE_DESIGN and is_ar_only:
             if cmd.startswith("DESIGN_"):
                 parts = cmd.split("_")
                 if len(parts) == 3:
@@ -1897,59 +2043,96 @@ async def handle_webhook(req: Request, bot_key: str):
                         idx = 1
 
                     size_key = "SQUARE" if sv == "S" else "VERTICAL"
-                    s.chosen_size = size_key
-                    s.chosen_design = max(1, min(design_count, idx))
+                    idx = max(1, min(design_count, idx))
 
-                    s.state = STATE_PREVIEW_AR
-                    tg_send_message(
+                    async with s.lock:
+                        s.chosen_size = size_key
+                        s.chosen_design = idx
+                        s.state = STATE_PREVIEW_AR
+
+                    await atg_send_message(
                         bot_token,
                         s.chat_id,
-                        hz_msg_preview(bot_key, s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                        hz_msg_preview(bot_key, name_ar_now, size_label_ar(size_key), idx),
                         kb_preview_ar(supports_vertical, design_count),
                     )
                     return {"ok": True}
 
-            if not s.chosen_size:
-                s.chosen_size = "SQUARE"
-            tg_send_message(bot_token, s.chat_id, hz_msg_choose_design(design_count), kb_choose_design(s.chosen_size, design_count))
+            if not chosen_size_now:
+                chosen_size_now = "SQUARE"
+
+            await atg_send_message(
+                bot_token,
+                s.chat_id,
+                hz_msg_choose_design(design_count),
+                kb_choose_design(chosen_size_now, design_count),
+            )
             return {"ok": True}
 
-        if s.state == STATE_PREVIEW_AR and is_ar_only:
+        async with s.lock:
+            state_now = s.state
+            name_ar_now = s.name_ar
+            chosen_size_now = s.chosen_size or "SQUARE"
+            chosen_design_now = s.chosen_design or 1
+            seq_now = s.seq
+
+        if state_now == STATE_PREVIEW_AR and is_ar_only:
             if cmd == "BACK_SIZE" and supports_vertical:
-                s.state = STATE_CHOOSE_SIZE
-                tg_send_message(bot_token, s.chat_id, hz_msg_choose_size(supports_vertical), hz_kb_choose_size(supports_vertical))
+                async with s.lock:
+                    s.state = STATE_CHOOSE_SIZE
+                await atg_send_message(
+                    bot_token,
+                    s.chat_id,
+                    hz_msg_choose_size(supports_vertical),
+                    hz_kb_choose_size(supports_vertical),
+                )
                 return {"ok": True}
 
             if cmd == "BACK_DESIGN" and design_count > 1:
-                s.state = STATE_CHOOSE_DESIGN
-                if not s.chosen_size:
-                    s.chosen_size = "SQUARE"
-                tg_send_message(bot_token, s.chat_id, hz_msg_choose_design(design_count), kb_choose_design(s.chosen_size, design_count))
+                async with s.lock:
+                    s.state = STATE_CHOOSE_DESIGN
+                await atg_send_message(
+                    bot_token,
+                    s.chat_id,
+                    hz_msg_choose_design(design_count),
+                    kb_choose_design(chosen_size_now, design_count),
+                )
                 return {"ok": True}
 
             if cmd == "EDIT_AR":
-                s.state = STATE_WAIT_AR
-                tg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
+                async with s.lock:
+                    s.state = STATE_WAIT_AR
+                await atg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
                 return {"ok": True}
 
             if cmd == "CONFIRM_GEN":
                 if job_queue.qsize() >= MAX_QUEUE_SIZE:
-                    tg_send_message(bot_token, s.chat_id, msg_high_load(ar_only=True), hz_kb_start_again())
-                    reset_session(s, keep_last_name=True)
+                    async with s.lock:
+                        reset_session(s, keep_last_name=True)
+                    await atg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        msg_high_load(ar_only=True),
+                        hz_kb_start_again(),
+                    )
                     return {"ok": True}
 
-                s.state = STATE_CREATING
-                tg_send_message(bot_token, s.chat_id, hz_msg_creating())
+                async with s.lock:
+                    s.state = STATE_CREATING
+                    seq_now = s.seq
+
+                await atg_send_message(bot_token, s.chat_id, hz_msg_creating())
 
                 async with _inflight_lock:
-                    key = (bot_key, s.chat_id, s.seq)
+                    key = (bot_key, s.chat_id, seq_now)
                     if key in _inflight:
                         return {"ok": True}
                     _inflight.add(key)
 
-                asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, s.seq))
+                asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, seq_now))
 
-                template_id = pick_template_id(bot, s.chosen_size or "SQUARE", s.chosen_design or 1)
+                template_id = pick_template_id(bot, chosen_size_now, chosen_design_now)
+
                 try:
                     job_queue.put_nowait(
                         Job(
@@ -1957,40 +2140,45 @@ async def handle_webhook(req: Request, bot_key: str):
                             chat_id=s.chat_id,
                             user_id=s.user_id,
                             username=s.username,
-                            name_ar=s.name_ar,
+                            name_ar=name_ar_now,
                             name_en="",
-                            size_key=s.chosen_size or "SQUARE",
-                            design_number=int(s.chosen_design or 1),
+                            size_key=chosen_size_now,
+                            design_number=int(chosen_design_now),
                             template_id=template_id,
                             requested_at=time.time(),
-                            seq=s.seq,
+                            seq=seq_now,
                             queue_name=queue_name,
                         )
                     )
                 except asyncio.QueueFull:
-                    tg_send_message(bot_token, s.chat_id, msg_high_load(ar_only=True), hz_kb_start_again())
-                    reset_session(s, keep_last_name=True)
+                    async with s.lock:
+                        reset_session(s, keep_last_name=True)
+                    await atg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        msg_high_load(ar_only=True),
+                        hz_kb_start_again(),
+                    )
                     return {"ok": True}
 
                 return {"ok": True}
 
-            if not s.chosen_size:
-                s.chosen_size = "SQUARE"
-            tg_send_message(
+            await atg_send_message(
                 bot_token,
                 s.chat_id,
-                hz_msg_preview(bot_key, s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                hz_msg_preview(bot_key, name_ar_now, size_label_ar(chosen_size_now), chosen_design_now),
                 kb_preview_ar(supports_vertical, design_count),
             )
             return {"ok": True}
 
-        if s.state == STATE_CREATING:
-            return {"ok": True}
-
         if not is_ar_only:
-            tg_send_message(bot_token, s.chat_id, ar_msg_need_start(), ar_kb_start_again())
+            await atg_send_message(bot_token, s.chat_id, ar_msg_need_start(), ar_kb_start_again())
         else:
-            tg_send_message(bot_token, s.chat_id, hz_msg_need_start(), hz_kb_start_again())
+            await atg_send_message(bot_token, s.chat_id, hz_msg_need_start(), hz_kb_start_again())
+        return {"ok": True}
+
+    except Exception as e:
+        log.exception("Webhook error for bot=%s: %s", bot_key, repr(e))
         return {"ok": True}
 
 
@@ -2124,7 +2312,7 @@ async def amro_share_mini(token: str):
   <div class="wrap">
     <div class="card">
       <div class="title">مشاركة البطاقة</div>
-      <div class="sub">سنحاول فتح المشاركة مباشرة على الجوال</div>
+      <div class="sub">اضغط الزر لفتح المشاركة مباشرة</div>
 
       <div class="preview">
         <img src="{image_url}" alt="بطاقة التهنئة" />
@@ -2132,7 +2320,7 @@ async def amro_share_mini(token: str):
 
       <button id="shareBtn" class="btn">📤 مشاركة البطاقة</button>
       <div id="note" class="note"></div>
-      <div class="tiny">إذا لم تظهر المشاركة تلقائيًا، اضغط الزر مرة أخرى</div>
+      <div class="tiny">إذا لم تعمل المشاركة على هذا الجهاز، سيتم فتح واتساب</div>
     </div>
   </div>
 
@@ -2151,7 +2339,6 @@ async def amro_share_mini(token: str):
     const note = document.getElementById("note");
     const absoluteImageUrl = {json.dumps(image_url)};
     let isBusy = false;
-    let autoTried = false;
 
     function setNote(text) {{
       note.textContent = text || "";
@@ -2173,7 +2360,7 @@ async def amro_share_mini(token: str):
       window.location.href = waUrl;
     }}
 
-    async function doShare(manual = false) {{
+    async function doShare() {{
       if (isBusy) return;
       isBusy = true;
       shareBtn.disabled = true;
@@ -2213,34 +2400,22 @@ async def amro_share_mini(token: str):
           return;
         }}
 
-        if (manual) {{
-          try {{
-            openWhatsAppFallback();
-            setNote("");
-            return;
-          }} catch (waErr) {{
-            console.log("whatsapp fallback failed", waErr);
-          }}
+        try {{
+          openWhatsAppFallback();
+          setNote("");
+          return;
+        }} catch (waErr) {{
+          console.log("whatsapp fallback failed", waErr);
         }}
 
-        setNote("اضغط زر مشاركة البطاقة");
+        setNote("تعذر فتح المشاركة");
       }} finally {{
         isBusy = false;
         shareBtn.disabled = false;
       }}
     }}
 
-    shareBtn.addEventListener("click", () => doShare(true));
-
-    window.addEventListener("load", async () => {{
-      if (autoTried) return;
-      autoTried = true;
-      try {{
-        await doShare(false);
-      }} catch (e) {{
-        console.log("auto share blocked", e);
-      }}
-    }});
+    shareBtn.addEventListener("click", doShare);
   </script>
 </body>
 </html>
