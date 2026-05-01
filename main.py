@@ -76,6 +76,7 @@ SCOPES = [
 
 PLACEHOLDER_AR = os.getenv("PLACEHOLDER_AR", "<<Name in Arabic>>")
 PLACEHOLDER_EN = os.getenv("PLACEHOLDER_EN", "<<Name in English>>")
+PLACEHOLDER_NAME = os.getenv("PLACEHOLDER_NAME", "<<Name>>")
 
 # ---------------------------
 # Google Sheet tracking
@@ -105,6 +106,7 @@ SHEET_COLUMNS_COUNT = 14
 # ---------------------------
 BOT_TOKEN_ALARABIA = os.getenv("BOT_TOKEN_ALARABIA", "").strip()
 TEMPLATE_SLIDES_ID_ALARABIA_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALARABIA_SQUARE", "").strip()
+TEMPLATE_SLIDES_ID_ALARABIA_VERTICAL = os.getenv("TEMPLATE_SLIDES_ID_ALARABIA_VERTICAL", "").strip()
 
 BOT_TOKEN_ALHAFEZ = os.getenv("BOT_TOKEN_ALHAFEZ", "").strip()
 TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE", "").strip()
@@ -141,11 +143,11 @@ def _default_bots() -> Dict[str, Dict[str, Any]]:
         "alarabia": {
             "token": BOT_TOKEN_ALARABIA,
             "template_square": TEMPLATE_SLIDES_ID_ALARABIA_SQUARE,
-            "template_vertical": "",
+            "template_vertical": TEMPLATE_SLIDES_ID_ALARABIA_VERTICAL,
             "lang_mode": "AR_EN",
             "branding": "alarabia",
             "design_count": 1,
-            "supports_vertical": False,
+            "supports_vertical": True,
         },
         "alhafez": {
             "token": BOT_TOKEN_ALHAFEZ,
@@ -584,6 +586,36 @@ def kb_after_ready_with_share(is_ar_only: bool, webapp_url: str) -> dict:
     }
 
 
+def ar_kb_after_square_ready_with_share(webapp_url: str) -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
+            [{"text": "📱 بطاقة طولي / Vertical Card", "callback_data": "ARABIA_VERTICAL_CARD"}],
+            [{"text": "🆕 بطاقة جديدة / New Card", "callback_data": "START_CARD"}],
+            [{"text": "↩️ البداية / Start", "callback_data": "START"}],
+        ]
+    }
+
+
+def ar_kb_after_vertical_ready_with_share(webapp_url: str) -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
+            [{"text": "🔁 إعادة الطولي / Repeat Vertical", "callback_data": "ARABIA_VERTICAL_CARD"}],
+            [{"text": "🆕 بطاقة مربعة / Square Card", "callback_data": "START_CARD"}],
+            [{"text": "↩️ البداية / Start", "callback_data": "START"}],
+        ]
+    }
+
+
+def ar_msg_ask_vertical_name() -> str:
+    return "اكتب الاسم بالعربي أو الإنجليزي:" + DIV + "Enter the name in Arabic or English:"
+
+
+def ar_msg_invalid_ar_or_en(reason_ar: str) -> str:
+    return f"غير صحيح: {reason_ar}\n\nاكتب الاسم بالعربي أو الإنجليزي فقط." + DIV + "Invalid name.\n\nPlease type Arabic or English letters only."
+
+
 # ---------------------------
 # Google clients (cached)
 # ---------------------------
@@ -700,6 +732,17 @@ def validate_en(name: str) -> Tuple[bool, str]:
     if not EN_ALLOWED.match(name):
         return False, "اكتب الاسم بالإنجليزية (A-Z) بدون رموز."
     return True, name
+
+
+def validate_ar_or_en(name: str) -> Tuple[bool, str]:
+    name = clean_text(name)
+    if not name:
+        return False, "الاسم فارغ."
+    if len(name) > MAX_NAME_LEN:
+        return False, f"الاسم طويل جدًا (أقصى {MAX_NAME_LEN} حرف)."
+    if AR_ALLOWED.match(name) or EN_ALLOWED.match(name):
+        return True, name
+    return False, "اكتب الاسم بالعربي أو الإنجليزي فقط."
 
 
 # ---------------------------
@@ -952,6 +995,7 @@ def kb_preview_ar(supports_vertical: bool, design_count: int) -> dict:
 STATE_MENU = "MENU"
 STATE_WAIT_AR = "WAIT_AR"
 STATE_WAIT_EN = "WAIT_EN"
+STATE_WAIT_ARABIA_VERTICAL_NAME = "WAIT_ARABIA_VERTICAL_NAME"
 STATE_REVIEW_NAME = "REVIEW_NAME"
 STATE_CHOOSE_SIZE = "CHOOSE_SIZE"
 STATE_CHOOSE_DESIGN = "CHOOSE_DESIGN"
@@ -1073,6 +1117,8 @@ class Job:
     requested_at: float
     seq: int
     queue_name: str
+    output_kind: str = "SQUARE"
+    single_name: str = ""
 
 
 async def worker_loop(queue_name: str, worker_id: int):
@@ -1128,13 +1174,20 @@ async def process_job(job: Job):
     try:
         async with queue_sem:
             gen_started_at = time.time()
-            png_bytes = await asyncio.to_thread(
-                generate_card_png,
-                template_id=job.template_id,
-                name_ar=job.name_ar,
-                name_en=job.name_en,
-                lang_mode=bot["lang_mode"],
-            )
+            if job.output_kind == "VERTICAL_SINGLE":
+                png_bytes = await asyncio.to_thread(
+                    generate_card_png_single_name,
+                    template_id=job.template_id,
+                    single_name=job.single_name or job.name_ar or job.name_en,
+                )
+            else:
+                png_bytes = await asyncio.to_thread(
+                    generate_card_png,
+                    template_id=job.template_id,
+                    name_ar=job.name_ar,
+                    name_en=job.name_en,
+                    lang_mode=bot["lang_mode"],
+                )
             gen_sec = max(0.0, time.time() - gen_started_at)
 
         async with s.lock:
@@ -1161,11 +1214,18 @@ async def process_job(job: Job):
                 kb_after_ready_with_share(True, share_url),
             )
         else:
+            if job.bot_key == "alarabia" and job.output_kind == "VERTICAL_SINGLE":
+                ready_kb = ar_kb_after_vertical_ready_with_share(share_url)
+            elif job.bot_key == "alarabia":
+                ready_kb = ar_kb_after_square_ready_with_share(share_url)
+            else:
+                ready_kb = kb_after_ready_with_share(False, share_url)
+
             await atg_send_message(
                 bot_token,
                 job.chat_id,
                 ar_msg_ready(),
-                kb_after_ready_with_share(False, share_url),
+                ready_kb,
             )
 
         await asyncio.to_thread(
@@ -1263,6 +1323,65 @@ def generate_card_png(template_id: str, name_ar: str, name_en: str, lang_mode: s
         reqs = [{"replaceAllText": {"containsText": {"text": PLACEHOLDER_AR}, "replaceText": name_ar}}]
         if lang_mode == "AR_EN":
             reqs.append({"replaceAllText": {"containsText": {"text": PLACEHOLDER_EN}, "replaceText": name_en}})
+
+        google_execute_with_retry(
+            lambda: slides.presentations()
+            .batchUpdate(
+                presentationId=pres_id,
+                body={"requests": reqs},
+            )
+            .execute(),
+            label="slides.presentations.batchUpdate",
+        )
+
+        pres = google_execute_with_retry(
+            lambda: slides.presentations().get(presentationId=pres_id).execute(),
+            label="slides.presentations.get",
+        )
+        slide_id = pres["slides"][0]["objectId"]
+
+        return export_png(pres_id, slide_id, creds)
+
+    finally:
+        if pres_id:
+            try:
+                google_execute_with_retry(
+                    lambda: drive.files().delete(fileId=pres_id, supportsAllDrives=True).execute(),
+                    label="drive.files.delete",
+                )
+            except Exception:
+                pass
+
+
+def generate_card_png_single_name(template_id: str, single_name: str) -> bytes:
+    drive, slides, _, creds = build_clients()
+    pres_id = None
+
+    try:
+        copy_body = {"name": f"tg_card_vertical_{int(time.time())}"}
+        if OUTPUT_FOLDER_ID:
+            copy_body["parents"] = [OUTPUT_FOLDER_ID]
+
+        copied = google_execute_with_retry(
+            lambda: drive.files()
+            .copy(
+                fileId=template_id,
+                body=copy_body,
+                supportsAllDrives=True,
+            )
+            .execute(),
+            label="drive.files.copy",
+        )
+        pres_id = copied["id"]
+
+        reqs = [
+            {
+                "replaceAllText": {
+                    "containsText": {"text": PLACEHOLDER_NAME},
+                    "replaceText": single_name,
+                }
+            }
+        ]
 
         google_execute_with_retry(
             lambda: slides.presentations()
@@ -1503,7 +1622,7 @@ def infer_command(
     if raw in {
         "EDIT_AR", "EDIT_EN", "GEN", "GEN_SQUARE", "GEN_VERTICAL",
         "START_CARD", "START", "CONFIRM_NAME", "CANCEL",
-        "BACK_SIZE", "BACK_DESIGN", "CONFIRM_GEN",
+        "BACK_SIZE", "BACK_DESIGN", "CONFIRM_GEN", "ARABIA_VERTICAL_CARD",
     }:
         return raw
 
@@ -1781,6 +1900,18 @@ async def handle_webhook(req: Request, bot_key: str):
                 await atg_send_message(bot_token, s.chat_id, hz_msg_welcome(bot_key), hz_kb_start_card())
             return {"ok": True}
 
+        if cmd == "ARABIA_VERTICAL_CARD" and bot_key == "alarabia":
+            async with s.lock:
+                bump_seq(s)
+                s.state = STATE_WAIT_ARABIA_VERTICAL_NAME
+                s.name_ar = ""
+                s.name_en = ""
+                s.chosen_size = "VERTICAL"
+                s.chosen_design = 1
+
+            await atg_send_message(bot_token, s.chat_id, ar_msg_ask_vertical_name())
+            return {"ok": True}
+
         if cmd == "START_CARD":
             async with s.lock:
                 bump_seq(s)
@@ -1798,6 +1929,73 @@ async def handle_webhook(req: Request, bot_key: str):
 
         async with s.lock:
             state_now = s.state
+
+        if state_now == STATE_WAIT_ARABIA_VERTICAL_NAME and bot_key == "alarabia":
+            ok, val = validate_ar_or_en(text)
+            if not ok:
+                await atg_send_message(bot_token, s.chat_id, ar_msg_invalid_ar_or_en(val), ar_kb_start_again())
+                return {"ok": True}
+
+            if job_queue.qsize() >= MAX_QUEUE_SIZE:
+                async with s.lock:
+                    reset_session(s, keep_last_name=True)
+                await atg_send_message(
+                    bot_token,
+                    s.chat_id,
+                    msg_high_load(ar_only=False),
+                    ar_kb_start_again(),
+                )
+                return {"ok": True}
+
+            async with s.lock:
+                s.name_ar = val
+                s.name_en = ""
+                s.chosen_size = "VERTICAL"
+                s.chosen_design = 1
+                s.state = STATE_CREATING
+                seq_now = s.seq
+
+            await atg_send_message(bot_token, s.chat_id, ar_msg_creating())
+
+            async with _inflight_lock:
+                key = (bot_key, s.chat_id, seq_now)
+                if key in _inflight:
+                    return {"ok": True}
+                _inflight.add(key)
+
+            asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, seq_now))
+
+            try:
+                job_queue.put_nowait(
+                    Job(
+                        bot_key=bot_key,
+                        chat_id=s.chat_id,
+                        user_id=s.user_id,
+                        username=s.username,
+                        name_ar=val,
+                        name_en="",
+                        size_key="VERTICAL",
+                        design_number=1,
+                        template_id=pick_template_id(bot, "VERTICAL", 1),
+                        requested_at=time.time(),
+                        seq=seq_now,
+                        queue_name=queue_name,
+                        output_kind="VERTICAL_SINGLE",
+                        single_name=val,
+                    )
+                )
+            except asyncio.QueueFull:
+                async with s.lock:
+                    reset_session(s, keep_last_name=True)
+                await atg_send_message(
+                    bot_token,
+                    s.chat_id,
+                    msg_high_load(ar_only=False),
+                    ar_kb_start_again(),
+                )
+                return {"ok": True}
+
+            return {"ok": True}
 
         if state_now == STATE_WAIT_AR:
             ok, val = validate_ar(text)
