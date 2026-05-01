@@ -616,6 +616,20 @@ def ar_msg_invalid_ar_or_en(reason_ar: str) -> str:
     return f"غير صحيح: {reason_ar}\n\nاكتب الاسم بالعربي أو الإنجليزي فقط." + DIV + "Invalid name.\n\nPlease type Arabic or English letters only."
 
 
+def ar_msg_confirm_vertical_name(name: str) -> str:
+    return f"تأكيد البيانات\nConfirm details\n\nالاسم / Name:\n\n{name}"
+
+
+def ar_kb_confirm_vertical_name() -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "✅ إصدار البطاقة / Generate", "callback_data": "CONFIRM_ARABIA_VERTICAL"}],
+            [{"text": "✏️ تعديل الاسم / Edit Name", "callback_data": "ARABIA_VERTICAL_CARD"}],
+            [{"text": "❌ إلغاء العملية / Cancel", "callback_data": "CANCEL"}],
+        ]
+    }
+
+
 # ---------------------------
 # Google clients (cached)
 # ---------------------------
@@ -867,7 +881,7 @@ def ar_kb_start_again() -> dict:
 
 
 def ar_kb_wait_en() -> dict:
-    return {"inline_keyboard": [[{"text": "تعديل الاسم العربي / Edit Arabic", "callback_data": "EDIT_AR"}]]}
+    return {"inline_keyboard": [[{"text": "✏️ تعديل العربي / Edit Ar", "callback_data": "EDIT_AR"}]]}
 
 
 def ar_kb_confirm() -> dict:
@@ -875,8 +889,8 @@ def ar_kb_confirm() -> dict:
         "inline_keyboard": [
             [{"text": "✅ إصدار البطاقة / Generate", "callback_data": "GEN"}],
             [
-                {"text": "تعديل العربي / Edit Arabic", "callback_data": "EDIT_AR"},
-                {"text": "تعديل الإنجليزي / Edit English", "callback_data": "EDIT_EN"},
+                {"text": "✏️ تعديل العربي / Edit Ar", "callback_data": "EDIT_AR"},
+                {"text": "✏️ تعديل الإنجليزي / Edit En", "callback_data": "EDIT_EN"},
             ],
             [{"text": "❌ إلغاء العملية / Cancel", "callback_data": "CANCEL"}],
         ]
@@ -996,6 +1010,7 @@ STATE_MENU = "MENU"
 STATE_WAIT_AR = "WAIT_AR"
 STATE_WAIT_EN = "WAIT_EN"
 STATE_WAIT_ARABIA_VERTICAL_NAME = "WAIT_ARABIA_VERTICAL_NAME"
+STATE_CONFIRM_ARABIA_VERTICAL = "CONFIRM_ARABIA_VERTICAL"
 STATE_REVIEW_NAME = "REVIEW_NAME"
 STATE_CHOOSE_SIZE = "CHOOSE_SIZE"
 STATE_CHOOSE_DESIGN = "CHOOSE_DESIGN"
@@ -1622,7 +1637,7 @@ def infer_command(
     if raw in {
         "EDIT_AR", "EDIT_EN", "GEN", "GEN_SQUARE", "GEN_VERTICAL",
         "START_CARD", "START", "CONFIRM_NAME", "CANCEL",
-        "BACK_SIZE", "BACK_DESIGN", "CONFIRM_GEN", "ARABIA_VERTICAL_CARD",
+        "BACK_SIZE", "BACK_DESIGN", "CONFIRM_GEN", "ARABIA_VERTICAL_CARD", "CONFIRM_ARABIA_VERTICAL",
     }:
         return raw
 
@@ -1743,6 +1758,14 @@ def infer_command(
         if contains_any_phrase(raw, confirm_phrases):
             return "CONFIRM_GEN"
 
+    if state == STATE_CONFIRM_ARABIA_VERTICAL:
+        if contains_any_phrase(raw, cancel_phrases):
+            return "CANCEL"
+        if contains_any_phrase(raw, edit_ar_phrases) or contains_any_phrase(raw, ["تعديل الاسم", "edit name", "change name"]):
+            return "ARABIA_VERTICAL_CARD"
+        if contains_any_phrase(raw, confirm_phrases):
+            return "CONFIRM_ARABIA_VERTICAL"
+
     return ""
 
 
@@ -1777,7 +1800,7 @@ def pick_template_id(bot: Dict[str, Any], size_key: str, design_idx_1based: int)
 # ---------------------------
 # Core handler
 # ---------------------------
-GEN_COMMANDS = {"GEN", "CONFIRM_GEN"}
+GEN_COMMANDS = {"GEN", "CONFIRM_GEN", "CONFIRM_ARABIA_VERTICAL"}
 
 
 async def handle_webhook(req: Request, bot_key: str):
@@ -1936,65 +1959,101 @@ async def handle_webhook(req: Request, bot_key: str):
                 await atg_send_message(bot_token, s.chat_id, ar_msg_invalid_ar_or_en(val), ar_kb_start_again())
                 return {"ok": True}
 
-            if job_queue.qsize() >= MAX_QUEUE_SIZE:
-                async with s.lock:
-                    reset_session(s, keep_last_name=True)
-                await atg_send_message(
-                    bot_token,
-                    s.chat_id,
-                    msg_high_load(ar_only=False),
-                    ar_kb_start_again(),
-                )
-                return {"ok": True}
-
             async with s.lock:
                 s.name_ar = val
                 s.name_en = ""
                 s.chosen_size = "VERTICAL"
                 s.chosen_design = 1
-                s.state = STATE_CREATING
-                seq_now = s.seq
+                s.state = STATE_CONFIRM_ARABIA_VERTICAL
 
-            await atg_send_message(bot_token, s.chat_id, ar_msg_creating())
+            await atg_send_message(
+                bot_token,
+                s.chat_id,
+                ar_msg_confirm_vertical_name(val),
+                ar_kb_confirm_vertical_name(),
+            )
+            return {"ok": True}
 
-            async with _inflight_lock:
-                key = (bot_key, s.chat_id, seq_now)
-                if key in _inflight:
-                    return {"ok": True}
-                _inflight.add(key)
+        async with s.lock:
+            state_now = s.state
+            vertical_name_now = s.name_ar
+            seq_now = s.seq
 
-            asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, seq_now))
-
-            try:
-                job_queue.put_nowait(
-                    Job(
-                        bot_key=bot_key,
-                        chat_id=s.chat_id,
-                        user_id=s.user_id,
-                        username=s.username,
-                        name_ar=val,
-                        name_en="",
-                        size_key="VERTICAL",
-                        design_number=1,
-                        template_id=pick_template_id(bot, "VERTICAL", 1),
-                        requested_at=time.time(),
-                        seq=seq_now,
-                        queue_name=queue_name,
-                        output_kind="VERTICAL_SINGLE",
-                        single_name=val,
-                    )
-                )
-            except asyncio.QueueFull:
+        if state_now == STATE_CONFIRM_ARABIA_VERTICAL and bot_key == "alarabia":
+            if cmd == "ARABIA_VERTICAL_CARD":
                 async with s.lock:
-                    reset_session(s, keep_last_name=True)
-                await atg_send_message(
-                    bot_token,
-                    s.chat_id,
-                    msg_high_load(ar_only=False),
-                    ar_kb_start_again(),
-                )
+                    s.state = STATE_WAIT_ARABIA_VERTICAL_NAME
+                    s.name_ar = ""
+                    s.name_en = ""
+                    s.chosen_size = "VERTICAL"
+                    s.chosen_design = 1
+                await atg_send_message(bot_token, s.chat_id, ar_msg_ask_vertical_name())
                 return {"ok": True}
 
+            if cmd == "CONFIRM_ARABIA_VERTICAL":
+                if job_queue.qsize() >= MAX_QUEUE_SIZE:
+                    async with s.lock:
+                        reset_session(s, keep_last_name=True)
+                    await atg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        msg_high_load(ar_only=False),
+                        ar_kb_start_again(),
+                    )
+                    return {"ok": True}
+
+                async with s.lock:
+                    s.state = STATE_CREATING
+                    seq_now = s.seq
+
+                await atg_send_message(bot_token, s.chat_id, ar_msg_creating())
+
+                async with _inflight_lock:
+                    key = (bot_key, s.chat_id, seq_now)
+                    if key in _inflight:
+                        return {"ok": True}
+                    _inflight.add(key)
+
+                asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, seq_now))
+
+                try:
+                    job_queue.put_nowait(
+                        Job(
+                            bot_key=bot_key,
+                            chat_id=s.chat_id,
+                            user_id=s.user_id,
+                            username=s.username,
+                            name_ar=vertical_name_now,
+                            name_en="",
+                            size_key="VERTICAL",
+                            design_number=1,
+                            template_id=pick_template_id(bot, "VERTICAL", 1),
+                            requested_at=time.time(),
+                            seq=seq_now,
+                            queue_name=queue_name,
+                            output_kind="VERTICAL_SINGLE",
+                            single_name=vertical_name_now,
+                        )
+                    )
+                except asyncio.QueueFull:
+                    async with s.lock:
+                        reset_session(s, keep_last_name=True)
+                    await atg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        msg_high_load(ar_only=False),
+                        ar_kb_start_again(),
+                    )
+                    return {"ok": True}
+
+                return {"ok": True}
+
+            await atg_send_message(
+                bot_token,
+                s.chat_id,
+                ar_msg_confirm_vertical_name(vertical_name_now),
+                ar_kb_confirm_vertical_name(),
+            )
             return {"ok": True}
 
         if state_now == STATE_WAIT_AR:
