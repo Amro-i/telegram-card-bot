@@ -590,8 +590,8 @@ def ar_kb_after_square_ready_with_share(webapp_url: str) -> dict:
     return {
         "inline_keyboard": [
             [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
-            [{"text": "📱 بطاقة طولي / Vertical Card", "callback_data": "ARABIA_VERTICAL_CARD"}],
-            [{"text": "🆕 بطاقة جديدة / New Card", "callback_data": "START_CARD"}],
+            [{"text": "بطاقة طولي / Vertical Card", "callback_data": "ARABIA_VERTICAL_CARD"}],
+            [{"text": "بطاقة جديدة / New Card", "callback_data": "START_CARD"}],
             [{"text": "↩️ البداية / Start", "callback_data": "START"}],
         ]
     }
@@ -601,8 +601,8 @@ def ar_kb_after_vertical_ready_with_share(webapp_url: str) -> dict:
     return {
         "inline_keyboard": [
             [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
-            [{"text": "🔁 إعادة الطولي / Repeat Vertical", "callback_data": "ARABIA_VERTICAL_CARD"}],
-            [{"text": "🆕 بطاقة مربعة / Square Card", "callback_data": "START_CARD"}],
+            [{"text": "إعادة الطولي / Repeat Vertical", "callback_data": "ARABIA_VERTICAL_CARD"}],
+            [{"text": "بطاقة مربعة / Square Card", "callback_data": "START_CARD"}],
             [{"text": "↩️ البداية / Start", "callback_data": "START"}],
         ]
     }
@@ -624,7 +624,7 @@ def ar_kb_confirm_vertical_name() -> dict:
     return {
         "inline_keyboard": [
             [{"text": "✅ إصدار البطاقة / Generate", "callback_data": "CONFIRM_ARABIA_VERTICAL"}],
-            [{"text": "✏️ تعديل الاسم / Edit Name", "callback_data": "ARABIA_VERTICAL_CARD"}],
+            [{"text": "تعديل الاسم / Edit Name", "callback_data": "ARABIA_VERTICAL_CARD"}],
             [{"text": "❌ إلغاء العملية / Cancel", "callback_data": "CANCEL"}],
         ]
     }
@@ -881,7 +881,7 @@ def ar_kb_start_again() -> dict:
 
 
 def ar_kb_wait_en() -> dict:
-    return {"inline_keyboard": [[{"text": "✏️ تعديل العربي / Edit Ar", "callback_data": "EDIT_AR"}]]}
+    return {"inline_keyboard": [[{"text": "تعديل العربي / Edit Ar", "callback_data": "EDIT_AR"}]]}
 
 
 def ar_kb_confirm() -> dict:
@@ -889,8 +889,8 @@ def ar_kb_confirm() -> dict:
         "inline_keyboard": [
             [{"text": "✅ إصدار البطاقة / Generate", "callback_data": "GEN"}],
             [
-                {"text": "✏️ تعديل العربي / Edit Ar", "callback_data": "EDIT_AR"},
-                {"text": "✏️ تعديل الإنجليزي / Edit En", "callback_data": "EDIT_EN"},
+                {"text": "تعديل العربي / Edit Ar", "callback_data": "EDIT_AR"},
+                {"text": "تعديل الإنجليزي / Edit En", "callback_data": "EDIT_EN"},
             ],
             [{"text": "❌ إلغاء العملية / Cancel", "callback_data": "CANCEL"}],
         ]
@@ -3111,3 +3111,4 @@ async def webhook_kounuz_alward(req: Request):
 @app.post("/webhook/amro")
 async def webhook_amro(req: Request):
     return await handle_webhook(req, "amro")
+    
