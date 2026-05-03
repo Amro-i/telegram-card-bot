@@ -84,22 +84,41 @@ PLACEHOLDER_NAME = os.getenv("PLACEHOLDER_NAME", "<<Name>>")
 SHEET_ID = os.getenv("SHEET_ID", "").strip()
 SHEET_TAB = os.getenv("SHEET_TAB", "Tracking").strip()
 
-# IMPORTANT:
-# A Timestamp
-# B Bot
-# C Status
-# D Ar Name
-# E En Name
-# F Chat ID
-# G User ID
-# H Username
-# I Size
-# J Design
-# K Error
-# L INSTANCE_NAME
-# M QUEUE_WAIT_SEC
-# N GEN_SEC
-SHEET_COLUMNS_COUNT = 14
+# IMPORTANT Google Sheet columns:
+# A  Event Timestamp / وقت الحدث
+# B  Event Type / نوع الحدث
+# C  Bot / البوت
+# D  Chat ID / رقم المحادثة
+# E  User ID / رقم المستخدم
+# F  Username / اسم المستخدم
+# G  Name Used / الاسم المستخدم
+# H  Ar Name / الاسم العربي
+# I  En Name / الاسم الإنجليزي
+# J  Name Language / لغة الاسم
+# K  Card Category / فئة البطاقة
+# L  Card Type / نوع البطاقة
+# M  Size Key / كود المقاس
+# N  Output Kind / نوع الإخراج
+# O  Is Square / هل هي مربعة
+# P  Is Story Vertical / هل هي ستوري/طولية
+# Q  Card Sequence / ترتيب البطاقة
+# R  Design / التصميم
+# S  Template ID / رقم قالب التصميم
+# T  Queue Name / اسم الطابور
+# U  Queue Position On Submit / ترتيب دخول الطابور
+# V  Queue Entered At / وقت دخول الطابور
+# W  Processing Started At / وقت بداية المعالجة
+# X  Card Issued At / وقت إصدار البطاقة
+# Y  Queue Wait Sec / مدة الانتظار بالثواني
+# Z  Generation Sec / مدة الإصدار بالثواني
+# AA Total Sec / إجمالي الوقت بالثواني
+# AB Share URL / رابط المشاركة
+# AC Rating / التقييم
+# AD Rating Label / وصف التقييم
+# AE Rating Timestamp / وقت التقييم
+# AF Error / الخطأ
+# AG Instance Name / اسم السيرفر
+SHEET_COLUMNS_COUNT = 33
 
 # ---------------------------
 # Env (Bots)
@@ -587,25 +606,29 @@ def kb_after_ready_with_share(is_ar_only: bool, webapp_url: str) -> dict:
 
 
 def ar_kb_after_square_ready_with_share(webapp_url: str) -> dict:
-    return {
-        "inline_keyboard": [
-            [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
-            [{"text": "بطاقة طولي / Vertical Card", "callback_data": "ARABIA_VERTICAL_CARD"}],
-            [{"text": "بطاقة جديدة / New Card", "callback_data": "START_CARD"}],
-            [{"text": "↩️ البداية / Start", "callback_data": "START"}],
-        ]
-    }
+    rows = [
+        [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
+    ]
+    rows.extend(ar_rating_rows())
+    rows.extend([
+        [{"text": "بطاقة طولي / Vertical Card", "callback_data": "ARABIA_VERTICAL_CARD"}],
+        [{"text": "بطاقة جديدة / New Card", "callback_data": "START_CARD"}],
+        [{"text": "↩️ البداية / Start", "callback_data": "START"}],
+    ])
+    return {"inline_keyboard": rows}
 
 
 def ar_kb_after_vertical_ready_with_share(webapp_url: str) -> dict:
-    return {
-        "inline_keyboard": [
-            [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
-            [{"text": "إعادة الطولي / Repeat Vertical", "callback_data": "ARABIA_VERTICAL_CARD"}],
-            [{"text": "بطاقة مربعة / Square Card", "callback_data": "START_CARD"}],
-            [{"text": "↩️ البداية / Start", "callback_data": "START"}],
-        ]
-    }
+    rows = [
+        [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
+    ]
+    rows.extend(ar_rating_rows())
+    rows.extend([
+        [{"text": "إعادة الطولي / Repeat Vertical", "callback_data": "ARABIA_VERTICAL_CARD"}],
+        [{"text": "بطاقة مربعة / Square Card", "callback_data": "START_CARD"}],
+        [{"text": "↩️ البداية / Start", "callback_data": "START"}],
+    ])
+    return {"inline_keyboard": rows}
 
 
 def ar_msg_ask_vertical_name() -> str:
@@ -628,6 +651,27 @@ def ar_kb_confirm_vertical_name() -> dict:
             [{"text": "❌ إلغاء العملية / Cancel", "callback_data": "CANCEL"}],
         ]
     }
+
+
+def ar_rating_rows() -> List[List[dict]]:
+    return [
+        [{"text": "⭐ الخدمة / Rate Service", "callback_data": "RATE_ARABIA_INFO"}],
+        [
+            {"text": "خمس نجوم", "callback_data": "RATE_ARABIA_INFO"},
+            {"text": "نجمة", "callback_data": "RATE_ARABIA_INFO"},
+        ],
+        [
+            {"text": "⭐", "callback_data": "RATE_ARABIA_5"},
+            {"text": "⭐", "callback_data": "RATE_ARABIA_4"},
+            {"text": "⭐", "callback_data": "RATE_ARABIA_3"},
+            {"text": "⭐", "callback_data": "RATE_ARABIA_2"},
+            {"text": "⭐", "callback_data": "RATE_ARABIA_1"},
+        ],
+    ]
+
+
+def ar_msg_rating_thanks(stars: int) -> str:
+    return f"شكراً لتقييمك الخدمة بـ {stars} نجوم ⭐" + DIV + f"Thank you for rating the service {stars} stars ⭐"
 
 
 # ---------------------------
@@ -1033,6 +1077,26 @@ class Session:
     chosen_design: int = 1
     last_name_ar: str = ""
     last_gen_ts: float = 0
+    last_card_size: str = ""
+    last_card_design: int = 1
+    last_card_output_kind: str = ""
+    last_card_type_label: str = ""
+    last_card_sequence: str = ""
+    last_card_name_used: str = ""
+    last_card_name_ar: str = ""
+    last_card_name_en: str = ""
+    last_card_name_language: str = ""
+    last_card_template_id: str = ""
+    last_card_queue_name: str = ""
+    last_card_queue_position: int = 0
+    last_card_queue_entered_at: str = ""
+    last_card_processing_started_at: str = ""
+    last_card_issued_at: str = ""
+    last_card_queue_wait_sec: str = ""
+    last_card_gen_sec: str = ""
+    last_card_total_sec: str = ""
+    last_card_share_url: str = ""
+    last_rating: str = ""
     recent_fps: Dict[str, float] = field(default_factory=dict)
     user_id: str = ""
     username: str = ""
@@ -1132,6 +1196,8 @@ class Job:
     requested_at: float
     seq: int
     queue_name: str
+    queue_entered_at: str = ""
+    queue_position_at_submit: int = 0
     output_kind: str = "SQUARE"
     single_name: str = ""
 
@@ -1166,7 +1232,143 @@ async def _progress_ping(bot_token: str, bot_key: str, chat_id: str, seq: int):
 
 
 def size_label_ar(size_key: str) -> str:
-    return "مربع" if size_key == "SQUARE" else "طولي"
+    if size_key == "SQUARE":
+        return "مربع / Square"
+    if size_key == "VERTICAL":
+        return "ستوري طولي / Story Vertical"
+    return str(size_key or "")
+
+
+def detect_name_language(name: str) -> str:
+    name = clean_text(name)
+    if not name:
+        return ""
+    if AR_ALLOWED.match(name):
+        return "عربي / Arabic"
+    if EN_ALLOWED.match(name):
+        return "إنجليزي / English"
+    return "مختلط / Mixed"
+
+
+def card_category(size_key: str) -> str:
+    return "مربع / Square" if size_key == "SQUARE" else "ستوري / Story"
+
+
+def card_type_label(job: Job) -> str:
+    if job.bot_key == "alarabia" and job.output_kind == "VERTICAL_SINGLE":
+        return "بطاقة ستوري طولية - اسم عربي أو إنجليزي / Story Vertical Card - Arabic or English Name"
+    if job.size_key == "VERTICAL":
+        return "بطاقة ستوري طولية / Story Vertical Card"
+    return "بطاقة مربعة / Square Card"
+
+
+def card_sequence_label(job: Job) -> str:
+    if job.bot_key == "alarabia" and job.output_kind == "VERTICAL_SINGLE":
+        return "البطاقة الثانية - ستوري/طولي / Second Card - Story/Vertical"
+    return "البطاقة الأولى - مربعة / First Card - Square"
+
+
+def yes_no(value: bool) -> str:
+    return "نعم / Yes" if value else "لا / No"
+
+
+def rating_label(stars: Union[str, int]) -> str:
+    try:
+        n = int(stars)
+    except Exception:
+        return ""
+    n = max(1, min(5, n))
+    return f"{n} من 5 / {n} of 5"
+
+
+def build_sheet_row(
+    *,
+    event_ts: str,
+    event_type: str,
+    job: Optional[Job] = None,
+    bot_key: str = "",
+    chat_id: str = "",
+    user_id: str = "",
+    username: str = "",
+    name_used: str = "",
+    name_ar: str = "",
+    name_en: str = "",
+    name_language: str = "",
+    size_key: str = "",
+    output_kind: str = "",
+    card_type: str = "",
+    card_seq: str = "",
+    design_number: Union[str, int] = "",
+    template_id: str = "",
+    queue_name: str = "",
+    queue_position: Union[str, int] = "",
+    queue_entered_at: str = "",
+    processing_started_at: str = "",
+    card_issued_at: str = "",
+    queue_wait_sec: str = "",
+    gen_sec: str = "",
+    total_sec: str = "",
+    share_url: str = "",
+    rating: str = "",
+    error: str = "",
+) -> List[str]:
+    if job is not None:
+        bot_key = job.bot_key
+        chat_id = job.chat_id
+        user_id = job.user_id
+        username = job.username
+        name_ar = job.name_ar or ""
+        name_en = job.name_en or ""
+        name_used = job.single_name or job.name_ar or job.name_en or name_used
+        name_language = detect_name_language(name_used)
+        size_key = job.size_key or size_key
+        output_kind = job.output_kind or output_kind
+        card_type = card_type_label(job)
+        card_seq = card_sequence_label(job)
+        design_number = job.design_number or design_number
+        template_id = job.template_id or template_id
+        queue_name = job.queue_name or queue_name
+        queue_position = job.queue_position_at_submit or queue_position
+        queue_entered_at = job.queue_entered_at or queue_entered_at
+
+    is_square = size_key == "SQUARE"
+    is_story = size_key == "VERTICAL"
+
+    return normalize_sheet_row([
+        event_ts,
+        event_type,
+        bot_key or "",
+        chat_id or "",
+        user_id or "",
+        username or "",
+        name_used or "",
+        name_ar or "",
+        name_en or "",
+        name_language or detect_name_language(name_used),
+        card_category(size_key) if size_key else "",
+        card_type or "",
+        size_key or "",
+        output_kind or "",
+        yes_no(is_square) if size_key else "",
+        yes_no(is_story) if size_key else "",
+        card_seq or "",
+        str(design_number or ""),
+        template_id or "",
+        queue_name or "",
+        str(queue_position or ""),
+        queue_entered_at or "",
+        processing_started_at or "",
+        card_issued_at or "",
+        str(queue_wait_sec or ""),
+        str(gen_sec or ""),
+        str(total_sec or ""),
+        share_url or "",
+        str(rating or ""),
+        rating_label(rating),
+        event_ts if rating else "",
+        str(error or "")[:400],
+        INSTANCE_NAME,
+    ])
 
 
 async def process_job(job: Job):
@@ -1181,6 +1383,7 @@ async def process_job(job: Job):
             return
 
     started_processing_at = time.time()
+    processing_started_at_str = now_ts_riyadh()
     queue_wait_sec = max(0.0, started_processing_at - float(job.requested_at or started_processing_at))
 
     gen_sec = 0.0
@@ -1219,6 +1422,8 @@ async def process_job(job: Job):
             bot_key=job.bot_key,
         )
         share_url = make_public_url(f"/share-mini/{share_token}")
+        card_issued_at = now_ts_riyadh()
+        total_sec = max(0.0, time.time() - float(job.requested_at or time.time()))
         is_ar_only = bot["lang_mode"] == "AR_ONLY"
 
         if is_ar_only:
@@ -1245,26 +1450,40 @@ async def process_job(job: Job):
 
         await asyncio.to_thread(
             safe_sheet_append_row,
-            [
-                now_ts_riyadh(),
-                job.bot_key,
-                "SUCCESS",
-                job.name_ar or "",
-                job.name_en or "",
-                job.chat_id or "",
-                job.user_id or "",
-                job.username or "",
-                size_label_ar(job.size_key),
-                str(job.design_number or 1),
-                "",
-                INSTANCE_NAME,
-                f"{queue_wait_sec:.2f}",
-                f"{gen_sec:.2f}",
-            ],
+            build_sheet_row(
+                event_ts=card_issued_at,
+                event_type="ISSUED / تم الإصدار",
+                job=job,
+                processing_started_at=processing_started_at_str,
+                card_issued_at=card_issued_at,
+                queue_wait_sec=f"{queue_wait_sec:.2f}",
+                gen_sec=f"{gen_sec:.2f}",
+                total_sec=f"{total_sec:.2f}",
+                share_url=share_url,
+            ),
         )
 
         async with s.lock:
             s.last_name_ar = job.name_ar or s.last_name_ar
+            s.last_card_size = job.size_key or ""
+            s.last_card_design = int(job.design_number or 1)
+            s.last_card_output_kind = job.output_kind or ""
+            s.last_card_type_label = card_type_label(job)
+            s.last_card_sequence = card_sequence_label(job)
+            s.last_card_name_used = job.single_name or job.name_ar or job.name_en or ""
+            s.last_card_name_ar = job.name_ar or ""
+            s.last_card_name_en = job.name_en or ""
+            s.last_card_name_language = detect_name_language(s.last_card_name_used)
+            s.last_card_template_id = job.template_id or ""
+            s.last_card_queue_name = job.queue_name or ""
+            s.last_card_queue_position = int(job.queue_position_at_submit or 0)
+            s.last_card_queue_entered_at = job.queue_entered_at or ""
+            s.last_card_processing_started_at = processing_started_at_str
+            s.last_card_issued_at = card_issued_at
+            s.last_card_queue_wait_sec = f"{queue_wait_sec:.2f}"
+            s.last_card_gen_sec = f"{gen_sec:.2f}"
+            s.last_card_total_sec = f"{total_sec:.2f}"
+            s.last_card_share_url = share_url
             reset_session(s, keep_last_name=True)
 
     except Exception as e:
@@ -1276,24 +1495,21 @@ async def process_job(job: Job):
         else:
             await atg_send_message(bot_token, job.chat_id, hz_msg_error(str(e)), hz_kb_start_again())
 
+        error_ts = now_ts_riyadh()
+        total_sec = max(0.0, time.time() - float(job.requested_at or time.time()))
         await asyncio.to_thread(
             safe_sheet_append_row,
-            [
-                now_ts_riyadh(),
-                job.bot_key,
-                "ERROR",
-                job.name_ar or "",
-                job.name_en or "",
-                job.chat_id or "",
-                job.user_id or "",
-                job.username or "",
-                size_label_ar(job.size_key),
-                str(job.design_number or 1),
-                str(e)[:400],
-                INSTANCE_NAME,
-                f"{queue_wait_sec:.2f}",
-                f"{gen_sec:.2f}",
-            ],
+            build_sheet_row(
+                event_ts=error_ts,
+                event_type="ERROR / خطأ",
+                job=job,
+                processing_started_at=processing_started_at_str,
+                card_issued_at="",
+                queue_wait_sec=f"{queue_wait_sec:.2f}",
+                gen_sec=f"{gen_sec:.2f}",
+                total_sec=f"{total_sec:.2f}",
+                error=str(e)[:400],
+            ),
         )
 
         async with s.lock:
@@ -1638,6 +1854,8 @@ def infer_command(
         "EDIT_AR", "EDIT_EN", "GEN", "GEN_SQUARE", "GEN_VERTICAL",
         "START_CARD", "START", "CONFIRM_NAME", "CANCEL",
         "BACK_SIZE", "BACK_DESIGN", "CONFIRM_GEN", "ARABIA_VERTICAL_CARD", "CONFIRM_ARABIA_VERTICAL",
+        "RATE_ARABIA_INFO",
+        "RATE_ARABIA_1", "RATE_ARABIA_2", "RATE_ARABIA_3", "RATE_ARABIA_4", "RATE_ARABIA_5",
     }:
         return raw
 
@@ -1872,6 +2090,82 @@ async def handle_webhook(req: Request, bot_key: str):
             except Exception as e:
                 log.warning("answerCallbackQuery failed: %s", repr(e))
 
+        if bot_key == "alarabia" and cmd == "RATE_ARABIA_INFO":
+            if cq_id:
+                await atg_toast(bot_token, cq_id, "اختر عدد النجوم", False)
+            return {"ok": True}
+
+        if bot_key == "alarabia" and cmd.startswith("RATE_ARABIA_"):
+            try:
+                stars = int(cmd.replace("RATE_ARABIA_", ""))
+            except Exception:
+                stars = 5
+
+            stars = max(1, min(5, stars))
+            rating_ts = now_ts_riyadh()
+
+            async with s.lock:
+                s.last_rating = str(stars)
+                last_card_size = s.last_card_size or ""
+                last_card_design = s.last_card_design or 1
+                last_card_output_kind = s.last_card_output_kind or ""
+                last_card_type_label = s.last_card_type_label or ""
+                last_card_sequence = s.last_card_sequence or ""
+                last_card_name_used = s.last_card_name_used or ""
+                last_card_name_ar = s.last_card_name_ar or ""
+                last_card_name_en = s.last_card_name_en or ""
+                last_card_name_language = s.last_card_name_language or detect_name_language(last_card_name_used)
+                last_card_template_id = s.last_card_template_id or ""
+                last_card_queue_name = s.last_card_queue_name or ""
+                last_card_queue_position = s.last_card_queue_position or 0
+                last_card_queue_entered_at = s.last_card_queue_entered_at or ""
+                last_card_processing_started_at = s.last_card_processing_started_at or ""
+                last_card_issued_at = s.last_card_issued_at or ""
+                last_card_queue_wait_sec = s.last_card_queue_wait_sec or ""
+                last_card_gen_sec = s.last_card_gen_sec or ""
+                last_card_total_sec = s.last_card_total_sec or ""
+                last_card_share_url = s.last_card_share_url or ""
+
+            await asyncio.to_thread(
+                safe_sheet_append_row,
+                build_sheet_row(
+                    event_ts=rating_ts,
+                    event_type="RATING / تقييم",
+                    bot_key=bot_key,
+                    chat_id=s.chat_id or "",
+                    user_id=s.user_id or "",
+                    username=s.username or "",
+                    name_used=last_card_name_used,
+                    name_ar=last_card_name_ar,
+                    name_en=last_card_name_en,
+                    name_language=last_card_name_language,
+                    size_key=last_card_size,
+                    output_kind=last_card_output_kind,
+                    card_type=last_card_type_label,
+                    card_seq=last_card_sequence,
+                    design_number=last_card_design,
+                    template_id=last_card_template_id,
+                    queue_name=last_card_queue_name,
+                    queue_position=last_card_queue_position,
+                    queue_entered_at=last_card_queue_entered_at,
+                    processing_started_at=last_card_processing_started_at,
+                    card_issued_at=last_card_issued_at,
+                    queue_wait_sec=last_card_queue_wait_sec,
+                    gen_sec=last_card_gen_sec,
+                    total_sec=last_card_total_sec,
+                    share_url=last_card_share_url,
+                    rating=str(stars),
+                ),
+            )
+
+            await atg_send_message(
+                bot_token,
+                s.chat_id,
+                ar_msg_rating_thanks(stars),
+            )
+
+            return {"ok": True}
+
         async with s.lock:
             state_now = s.state
             last_gen_ts = s.last_gen_ts
@@ -2031,6 +2325,8 @@ async def handle_webhook(req: Request, bot_key: str):
                             requested_at=time.time(),
                             seq=seq_now,
                             queue_name=queue_name,
+                            queue_entered_at=now_ts_riyadh(),
+                            queue_position_at_submit=job_queue.qsize() + 1,
                             output_kind="VERTICAL_SINGLE",
                             single_name=vertical_name_now,
                         )
@@ -2191,6 +2487,8 @@ async def handle_webhook(req: Request, bot_key: str):
                             requested_at=time.time(),
                             seq=seq_now,
                             queue_name=queue_name,
+                            queue_entered_at=now_ts_riyadh(),
+                            queue_position_at_submit=job_queue.qsize() + 1,
                         )
                     )
                 except asyncio.QueueFull:
@@ -2418,6 +2716,8 @@ async def handle_webhook(req: Request, bot_key: str):
                             requested_at=time.time(),
                             seq=seq_now,
                             queue_name=queue_name,
+                            queue_entered_at=now_ts_riyadh(),
+                            queue_position_at_submit=job_queue.qsize() + 1,
                         )
                     )
                 except asyncio.QueueFull:
