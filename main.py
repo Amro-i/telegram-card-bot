@@ -608,26 +608,22 @@ def kb_after_ready_with_share(is_ar_only: bool, webapp_url: str) -> dict:
 def ar_kb_after_square_ready_with_share(webapp_url: str) -> dict:
     rows = [
         [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
-    ]
-    rows.extend(ar_rating_rows())
-    rows.extend([
         [{"text": "بطاقة طولي / Vertical Card", "callback_data": "ARABIA_VERTICAL_CARD"}],
         [{"text": "بطاقة جديدة / New Card", "callback_data": "START_CARD"}],
         [{"text": "↩️ البداية / Start", "callback_data": "START"}],
-    ])
+    ]
+    rows.extend(ar_rating_rows())
     return {"inline_keyboard": rows}
 
 
 def ar_kb_after_vertical_ready_with_share(webapp_url: str) -> dict:
     rows = [
         [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
-    ]
-    rows.extend(ar_rating_rows())
-    rows.extend([
         [{"text": "إعادة الطولي / Repeat Vertical", "callback_data": "ARABIA_VERTICAL_CARD"}],
         [{"text": "بطاقة مربعة / Square Card", "callback_data": "START_CARD"}],
         [{"text": "↩️ البداية / Start", "callback_data": "START"}],
-    ])
+    ]
+    rows.extend(ar_rating_rows())
     return {"inline_keyboard": rows}
 
 
@@ -655,23 +651,71 @@ def ar_kb_confirm_vertical_name() -> dict:
 
 def ar_rating_rows() -> List[List[dict]]:
     return [
-        [{"text": "⭐ الخدمة / Rate Service", "callback_data": "RATE_ARABIA_INFO"}],
+        [{"text": "Rate Service / تقييم الخدمة", "callback_data": "RATE_ARABIA_INFO"}],
         [
-            {"text": "خمس نجوم", "callback_data": "RATE_ARABIA_INFO"},
-            {"text": "نجمة", "callback_data": "RATE_ARABIA_INFO"},
-        ],
-        [
-            {"text": "⭐", "callback_data": "RATE_ARABIA_5"},
-            {"text": "⭐", "callback_data": "RATE_ARABIA_4"},
-            {"text": "⭐", "callback_data": "RATE_ARABIA_3"},
-            {"text": "⭐", "callback_data": "RATE_ARABIA_2"},
-            {"text": "⭐", "callback_data": "RATE_ARABIA_1"},
+            {"text": "😣", "callback_data": "RATE_ARABIA_1"},
+            {"text": "😕", "callback_data": "RATE_ARABIA_2"},
+            {"text": "🙂", "callback_data": "RATE_ARABIA_3"},
+            {"text": "😊", "callback_data": "RATE_ARABIA_4"},
+            {"text": "🤩", "callback_data": "RATE_ARABIA_5"},
         ],
     ]
 
 
+def rating_label(stars: Union[str, int]) -> str:
+    try:
+        n = int(stars)
+    except Exception:
+        return ""
+    n = max(1, min(5, n))
+    labels = {
+        1: "Very Dissatisfied / غير راضٍ جدًا",
+        2: "Dissatisfied / غير راضٍ",
+        3: "Neutral / محايد",
+        4: "Satisfied / راضٍ",
+        5: "Delighted / سعيد جدًا",
+    }
+    return labels.get(n, "")
+
+
+def rating_toast_text(stars: int) -> str:
+    stars = max(1, min(5, int(stars)))
+    mapping = {
+        1: "متأسفون أن التجربة لم تعجبك",
+        2: "شكرًا لملاحظتك، بنحاول نتحسن",
+        3: "شكرًا لتقييمك",
+        4: "سعداء بتقييمك",
+        5: "رائع! أسعدتنا جدًا",
+    }
+    return mapping.get(stars, "شكرًا لتقييمك")
+
+
 def ar_msg_rating_thanks(stars: int) -> str:
-    return f"شكراً لتقييمك الخدمة بـ {stars} نجوم ⭐" + DIV + f"Thank you for rating the service {stars} stars ⭐"
+    stars = max(1, min(5, int(stars)))
+    messages = {
+        1: (
+            "متأسفون أن التجربة لم تعجبك، ونقدّر ملاحظتك.",
+            "We are sorry the experience did not meet your expectations, and we appreciate your feedback.",
+        ),
+        2: (
+            "شكرًا لملاحظتك، سنعمل على تحسين الخدمة.",
+            "Thank you for your feedback. We will work on improving the service.",
+        ),
+        3: (
+            "شكرًا لتقييمك للخدمة.",
+            "Thank you for rating the service.",
+        ),
+        4: (
+            "سعداء أن الخدمة نالت رضاك، شكرًا لتقييمك.",
+            "We are glad you are satisfied with the service. Thank you for your rating.",
+        ),
+        5: (
+            "رائع! أسعدنا جدًا تقييمك للخدمة، شكرًا لك.",
+            "Wonderful! Your service rating made us very happy. Thank you.",
+        ),
+    }
+    ar, en = messages.get(stars, messages[3])
+    return ar + DIV + en
 
 
 # ---------------------------
@@ -1271,14 +1315,6 @@ def card_sequence_label(job: Job) -> str:
 def yes_no(value: bool) -> str:
     return "نعم / Yes" if value else "لا / No"
 
-
-def rating_label(stars: Union[str, int]) -> str:
-    try:
-        n = int(stars)
-    except Exception:
-        return ""
-    n = max(1, min(5, n))
-    return f"{n} من 5 / {n} of 5"
 
 
 def build_sheet_row(
@@ -2092,7 +2128,7 @@ async def handle_webhook(req: Request, bot_key: str):
 
         if bot_key == "alarabia" and cmd == "RATE_ARABIA_INFO":
             if cq_id:
-                await atg_toast(bot_token, cq_id, "اختر عدد النجوم", False)
+                await atg_toast(bot_token, cq_id, "اختر التقييم المناسب", False)
             return {"ok": True}
 
         if bot_key == "alarabia" and cmd.startswith("RATE_ARABIA_"):
@@ -2157,6 +2193,12 @@ async def handle_webhook(req: Request, bot_key: str):
                     rating=str(stars),
                 ),
             )
+
+            if cq_id:
+                try:
+                    await atg_toast(bot_token, cq_id, rating_toast_text(stars), False)
+                except Exception as e:
+                    log.warning("rating toast failed: %s", repr(e))
 
             await atg_send_message(
                 bot_token,
