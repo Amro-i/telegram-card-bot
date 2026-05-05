@@ -608,7 +608,7 @@ def kb_after_ready_with_share(is_ar_only: bool, webapp_url: str) -> dict:
 def ar_kb_after_square_ready_with_share(webapp_url: str) -> dict:
     rows = [
         [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
-        [{"text": "بطاقة طولي / Vertical Card", "callback_data": "ARABIA_VERTICAL_CARD"}],
+        [{"text": "مقاس طولي / Vertical Size", "callback_data": "ARABIA_VERTICAL_CARD"}],
         [{"text": "بطاقة جديدة / New Card", "callback_data": "START_CARD"}],
         [{"text": "↩️ البداية / Start", "callback_data": "START"}],
     ]
@@ -619,8 +619,8 @@ def ar_kb_after_square_ready_with_share(webapp_url: str) -> dict:
 def ar_kb_after_vertical_ready_with_share(webapp_url: str) -> dict:
     rows = [
         [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
-        [{"text": "إعادة الطولي / Repeat Vertical", "callback_data": "ARABIA_VERTICAL_CARD"}],
-        [{"text": "بطاقة مربعة / Square Card", "callback_data": "START_CARD"}],
+        [{"text": "مقاس طولي / Vertical Size", "callback_data": "ARABIA_VERTICAL_CARD"}],
+        [{"text": "مقاس مربع / Square Size", "callback_data": "START_CARD"}],
         [{"text": "↩️ البداية / Start", "callback_data": "START"}],
     ]
     rows.extend(ar_rating_rows())
@@ -1303,7 +1303,7 @@ def card_type_label(job: Job) -> str:
         return "بطاقة ستوري طولية - اسم عربي أو إنجليزي / Story Vertical Card - Arabic or English Name"
     if job.size_key == "VERTICAL":
         return "بطاقة ستوري طولية / Story Vertical Card"
-    return "بطاقة مربعة / Square Card"
+    return "مقاس مربع / Square Size"
 
 
 def card_sequence_label(job: Job) -> str:
