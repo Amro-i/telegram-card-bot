@@ -151,6 +151,50 @@ TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL
 AMRO_PREVIEW_SQUARE = os.getenv("AMRO_PREVIEW_SQUARE", "").strip()
 AMRO_PREVIEW_VERTICAL = os.getenv("AMRO_PREVIEW_VERTICAL", "").strip()
 
+# ---------------------------
+# Occasions / Templates for Amro + Kounuz Alward
+# ---------------------------
+OCCASIONS: Dict[str, str] = {
+    "ramadan": "رمضان",
+    "eid_fitr": "عيد الفطر",
+    "eid_adha": "عيد الأضحى",
+}
+
+# Amro: 6 square + 6 vertical templates for each occasion
+def _env_list(prefix: str, count: int = 6) -> List[str]:
+    return [os.getenv(f"{prefix}_{i}", "").strip() for i in range(1, count + 1)]
+
+AMRO_OCCASION_TEMPLATES = {
+    "ramadan": {
+        "SQUARE": _env_list("TEMPLATE_SLIDES_ID_AMRO_RAMADAN_SQUARE", 6),
+        "VERTICAL": _env_list("TEMPLATE_SLIDES_ID_AMRO_RAMADAN_VERTICAL", 6),
+    },
+    "eid_fitr": {
+        "SQUARE": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_FITR_SQUARE", 6),
+        "VERTICAL": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_FITR_VERTICAL", 6),
+    },
+    "eid_adha": {
+        "SQUARE": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_ADHA_SQUARE", 6),
+        "VERTICAL": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_ADHA_VERTICAL", 6),
+    },
+}
+
+# Kounuz Alward: 1 square + 1 vertical template for each occasion
+KOUNUZ_OCCASION_TEMPLATES = {
+    "ramadan": {
+        "SQUARE": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_RAMADAN_SQUARE", "").strip(),
+        "VERTICAL": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_RAMADAN_VERTICAL", "").strip(),
+    },
+    "eid_fitr": {
+        "SQUARE": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_FITR_SQUARE", "").strip(),
+        "VERTICAL": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_FITR_VERTICAL", "").strip(),
+    },
+    "eid_adha": {
+        "SQUARE": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_ADHA_SQUARE", "").strip(),
+        "VERTICAL": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_ADHA_VERTICAL", "").strip(),
+    },
+}
+
 BOTS_CONFIG_JSON = os.getenv("BOTS_CONFIG_JSON", "").strip()
 
 # generic share store for all bots
@@ -188,15 +232,20 @@ def _default_bots() -> Dict[str, Dict[str, Any]]:
         },
         "kounuz_alward": {
             "token": BOT_TOKEN_KOUNUZ_ALWARD,
+            # Legacy fallback templates remain supported, but occasion_templates are used for this bot.
             "template_square": TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_SQUARE,
             "template_vertical": TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_VERTICAL,
+            "occasion_templates": KOUNUZ_OCCASION_TEMPLATES,
             "lang_mode": "AR_ONLY",
             "branding": "kounuz_alward",
             "design_count": 1,
             "supports_vertical": True,
+            "requires_occasion": True,
+            "auto_issue_both_sizes": True,
         },
         "amro": {
             "token": BOT_TOKEN_AMRO,
+            # Legacy fallback templates remain supported, but occasion_templates are used for this bot.
             "template_square": [
                 TEMPLATE_SLIDES_ID_AMRO_SQUARE_1,
                 TEMPLATE_SLIDES_ID_AMRO_SQUARE_2,
@@ -207,10 +256,13 @@ def _default_bots() -> Dict[str, Dict[str, Any]]:
                 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2,
                 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3,
             ],
+            "occasion_templates": AMRO_OCCASION_TEMPLATES,
             "lang_mode": "AR_ONLY",
             "branding": "amro",
-            "design_count": 3,
+            "design_count": 6,
             "supports_vertical": True,
+            "requires_occasion": True,
+            "auto_issue_both_sizes": False,
         },
     }
 
@@ -232,6 +284,8 @@ def load_bots_config() -> Dict[str, Dict[str, Any]]:
             v.setdefault("branding", k)
             v.setdefault("design_count", 1)
             v.setdefault("supports_vertical", bool((v.get("template_vertical") or "")))
+            v.setdefault("requires_occasion", False)
+            v.setdefault("auto_issue_both_sizes", False)
         return cfg
     except Exception as e:
         log.exception("Invalid BOTS_CONFIG_JSON, falling back to defaults: %s", e)
@@ -727,12 +781,48 @@ _sheets = None
 _creds = None
 
 
+def _has_occasion_templates(bot: Dict[str, Any]) -> bool:
+    templates = bot.get("occasion_templates")
+    return isinstance(templates, dict) and bool(templates)
+
+
+def _validate_occasion_templates(bot_key: str, bot: Dict[str, Any]) -> None:
+    templates = bot.get("occasion_templates") or {}
+    design_count = int(bot.get("design_count") or 1)
+    auto_both = bool(bot.get("auto_issue_both_sizes"))
+
+    for occasion_key in OCCASIONS.keys():
+        occasion_templates = templates.get(occasion_key)
+        if not isinstance(occasion_templates, dict):
+            raise RuntimeError(f"{bot_key}: occasion_templates.{occasion_key} missing")
+
+        for size_key in ("SQUARE", "VERTICAL"):
+            value = occasion_templates.get(size_key)
+            if auto_both or design_count <= 1:
+                if not (isinstance(value, str) and value.strip()):
+                    raise RuntimeError(f"{bot_key}: occasion_templates.{occasion_key}.{size_key} is missing")
+            else:
+                if not (
+                    isinstance(value, list)
+                    and len(value) >= design_count
+                    and all(str(x).strip() for x in value[:design_count])
+                ):
+                    raise RuntimeError(
+                        f"{bot_key}: occasion_templates.{occasion_key}.{size_key} list is missing/invalid "
+                        f"for design_count={design_count}"
+                    )
+
+
 def require_env():
     for bot_key, bot in BOTS.items():
         if not (bot.get("token") or "").strip():
             raise RuntimeError(f"{bot_key}: token is missing")
         if bot.get("lang_mode") not in ("AR_ONLY", "AR_EN"):
             raise RuntimeError(f"{bot_key}: lang_mode must be AR_ONLY or AR_EN")
+
+        if bool(bot.get("requires_occasion")):
+            _validate_occasion_templates(bot_key, bot)
+            continue
 
         design_count = int(bot.get("design_count") or 1)
         supports_vertical = bool(bot.get("supports_vertical"))
@@ -761,7 +851,6 @@ def require_env():
 
     if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN) and not SERVICE_ACCOUNT_JSON:
         raise RuntimeError("Provide OAuth vars (GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN) or SERVICE_ACCOUNT_JSON")
-
 
 def build_clients():
     global _drive, _slides, _sheets, _creds
@@ -1010,6 +1099,40 @@ def hz_msg_choose_size(supports_vertical: bool) -> str:
     return "اختر مقاس البطاقة" if supports_vertical else "المقاس المتاح: مربع"
 
 
+def hz_msg_choose_occasion() -> str:
+    return "اختر مناسبة البطاقة"
+
+
+def occasion_label(occasion_key: str) -> str:
+    return OCCASIONS.get(occasion_key or "", occasion_key or "")
+
+
+def hz_msg_preview_occurrence(bot_key: str, name_ar: str, occasion_key: str, size_label: str, design_number: int, both_sizes: bool = False) -> str:
+    base = (
+        "ملخص البطاقة قبل الإصدار:\n\n"
+        f"الاسم: {name_ar}\n"
+        f"المناسبة: {occasion_label(occasion_key)}\n"
+    )
+    if both_sizes:
+        base += "سيتم إصدار: مربع + طولي\n"
+    else:
+        base += f"المقاس: {size_label}\n"
+        if bot_key == "amro":
+            base += f"رقم التصميم: {design_number}\n"
+    base += "\nهل تريد التأكيد؟"
+    return base
+
+
+def hz_kb_choose_occasion() -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "رمضان", "callback_data": "OCCASION_ramadan"}],
+            [{"text": "عيد الفطر", "callback_data": "OCCASION_eid_fitr"}],
+            [{"text": "عيد الأضحى", "callback_data": "OCCASION_eid_adha"}],
+        ]
+    }
+
+
 def hz_msg_choose_design(design_count: int) -> str:
     return "اختر رقم التصميم" if design_count > 1 else "التصميم الافتراضي"
 
@@ -1078,14 +1201,16 @@ def kb_choose_design(size_key: str, design_count: int) -> dict:
     return {"inline_keyboard": rows}
 
 
-def kb_preview_ar(supports_vertical: bool, design_count: int) -> dict:
+def kb_preview_ar(supports_vertical: bool, design_count: int, *, show_occasion: bool = False, show_size: bool = True, show_design: bool = True) -> dict:
     rows = [
         [{"text": "✅ تأكيد الإصدار", "callback_data": "CONFIRM_GEN"}],
         [{"text": "تعديل الاسم", "callback_data": "EDIT_AR"}],
     ]
-    if supports_vertical:
+    if show_occasion:
+        rows.append([{"text": "تغيير المناسبة", "callback_data": "BACK_OCCASION"}])
+    if supports_vertical and show_size:
         rows.append([{"text": "تغيير المقاس", "callback_data": "BACK_SIZE"}])
-    if design_count > 1:
+    if design_count > 1 and show_design:
         rows.append([{"text": "تغيير التصميم", "callback_data": "BACK_DESIGN"}])
     rows.append([{"text": "❌ إلغاء العملية", "callback_data": "CANCEL"}])
     return {"inline_keyboard": rows}
@@ -1100,6 +1225,7 @@ STATE_WAIT_EN = "WAIT_EN"
 STATE_WAIT_ARABIA_VERTICAL_NAME = "WAIT_ARABIA_VERTICAL_NAME"
 STATE_CONFIRM_ARABIA_VERTICAL = "CONFIRM_ARABIA_VERTICAL"
 STATE_REVIEW_NAME = "REVIEW_NAME"
+STATE_CHOOSE_OCCASION = "CHOOSE_OCCASION"
 STATE_CHOOSE_SIZE = "CHOOSE_SIZE"
 STATE_CHOOSE_DESIGN = "CHOOSE_DESIGN"
 STATE_PREVIEW_AR = "PREVIEW_AR"
@@ -1119,6 +1245,7 @@ class Session:
     seq: int = 0
     chosen_size: str = ""
     chosen_design: int = 1
+    chosen_occasion: str = ""
     last_name_ar: str = ""
     last_gen_ts: float = 0
     last_card_size: str = ""
@@ -1168,6 +1295,7 @@ def reset_session(s: Session, keep_last_name: bool = True):
     s.name_en = ""
     s.chosen_size = ""
     s.chosen_design = 1
+    s.chosen_occasion = ""
     if not keep_last_name:
         s.last_name_ar = ""
 
@@ -1244,6 +1372,9 @@ class Job:
     queue_position_at_submit: int = 0
     output_kind: str = "SQUARE"
     single_name: str = ""
+    occasion_key: str = ""
+    occasion_label: str = ""
+    template_id_vertical: str = ""
 
 
 async def worker_loop(queue_name: str, worker_id: int):
@@ -1275,6 +1406,32 @@ async def _progress_ping(bot_token: str, bot_key: str, chat_id: str, seq: int):
         await atg_send_message(bot_token, chat_id, hz_msg_still_working())
 
 
+async def send_generated_card_with_share(
+    *,
+    bot_token: str,
+    bot_key: str,
+    chat_id: str,
+    user_id: str,
+    png_bytes: bytes,
+    caption: str = "",
+) -> str:
+    await atg_send_photo(bot_token, chat_id, png_bytes, caption=caption, reply_markup=None)
+    share_token = create_share_token(
+        png_bytes,
+        chat_id=chat_id,
+        user_id=user_id,
+        bot_key=bot_key,
+    )
+    share_url = make_public_url(f"/share-mini/{share_token}")
+    await atg_send_message(
+        bot_token,
+        chat_id,
+        "مشاركة البطاقة",
+        kb_after_ready_with_share(True, share_url),
+    )
+    return share_url
+
+
 def size_label_ar(size_key: str) -> str:
     if size_key == "SQUARE":
         return "مربع / Square"
@@ -1295,18 +1452,29 @@ def detect_name_language(name: str) -> str:
 
 
 def card_category(size_key: str) -> str:
-    return "مربع / Square" if size_key == "SQUARE" else "ستوري / Story"
+    if size_key == "SQUARE":
+        return "مربع / Square"
+    if size_key == "VERTICAL":
+        return "ستوري / Story"
+    if size_key == "BOTH":
+        return "مربع + طولي / Square + Vertical"
+    return str(size_key or "")
 
 
 def card_type_label(job: Job) -> str:
+    occasion = f" - {job.occasion_label}" if getattr(job, "occasion_label", "") else ""
+    if job.output_kind == "BOTH_KOUNUZ":
+        return "بطاقتان: مربع + طولي / Two Cards: Square + Vertical" + occasion
     if job.bot_key == "alarabia" and job.output_kind == "VERTICAL_SINGLE":
         return "بطاقة ستوري طولية - اسم عربي أو إنجليزي / Story Vertical Card - Arabic or English Name"
     if job.size_key == "VERTICAL":
-        return "بطاقة ستوري طولية / Story Vertical Card"
-    return "مقاس مربع / Square Size"
+        return "بطاقة ستوري طولية / Story Vertical Card" + occasion
+    return "مقاس مربع / Square Size" + occasion
 
 
 def card_sequence_label(job: Job) -> str:
+    if job.output_kind == "BOTH_KOUNUZ":
+        return "بطاقتان - مربع وطولي / Two Cards - Square and Vertical"
     if job.bot_key == "alarabia" and job.output_kind == "VERTICAL_SINGLE":
         return "البطاقة الثانية - ستوري/طولي / Second Card - Story/Vertical"
     return "البطاقة الأولى - مربعة / First Card - Square"
@@ -1426,6 +1594,97 @@ async def process_job(job: Job):
     gen_started_at = None
 
     try:
+        if job.output_kind == "BOTH_KOUNUZ":
+            async with queue_sem:
+                gen_started_at = time.time()
+                png_square = await asyncio.to_thread(
+                    generate_card_png,
+                    template_id=job.template_id,
+                    name_ar=job.name_ar,
+                    name_en="",
+                    lang_mode=bot["lang_mode"],
+                )
+                png_vertical = await asyncio.to_thread(
+                    generate_card_png,
+                    template_id=job.template_id_vertical,
+                    name_ar=job.name_ar,
+                    name_en="",
+                    lang_mode=bot["lang_mode"],
+                )
+                gen_sec = max(0.0, time.time() - gen_started_at)
+
+            async with s.lock:
+                if job.seq != s.seq:
+                    log.info("Skip stale Kounuz result for %s", job.chat_id)
+                    return
+
+            share_url_square = await send_generated_card_with_share(
+                bot_token=bot_token,
+                bot_key=job.bot_key,
+                chat_id=job.chat_id,
+                user_id=job.user_id,
+                png_bytes=png_square,
+                caption="مربع",
+            )
+            share_url_vertical = await send_generated_card_with_share(
+                bot_token=bot_token,
+                bot_key=job.bot_key,
+                chat_id=job.chat_id,
+                user_id=job.user_id,
+                png_bytes=png_vertical,
+                caption="طولي",
+            )
+
+            card_issued_at = now_ts_riyadh()
+            total_sec = max(0.0, time.time() - float(job.requested_at or time.time()))
+            combined_share_urls = f"Square: {share_url_square} | Vertical: {share_url_vertical}"
+
+            await atg_send_message(
+                bot_token,
+                job.chat_id,
+                "تم إصدار البطاقتين بنجاح.",
+                hz_kb_start_again(),
+            )
+
+            await asyncio.to_thread(
+                safe_sheet_append_row,
+                build_sheet_row(
+                    event_ts=card_issued_at,
+                    event_type="ISSUED / تم الإصدار",
+                    job=job,
+                    processing_started_at=processing_started_at_str,
+                    card_issued_at=card_issued_at,
+                    queue_wait_sec=f"{queue_wait_sec:.2f}",
+                    gen_sec=f"{gen_sec:.2f}",
+                    total_sec=f"{total_sec:.2f}",
+                    share_url=combined_share_urls,
+                ),
+            )
+
+            async with s.lock:
+                s.last_name_ar = job.name_ar or s.last_name_ar
+                s.last_card_size = job.size_key or ""
+                s.last_card_design = int(job.design_number or 1)
+                s.last_card_output_kind = job.output_kind or ""
+                s.last_card_type_label = card_type_label(job)
+                s.last_card_sequence = card_sequence_label(job)
+                s.last_card_name_used = job.name_ar or ""
+                s.last_card_name_ar = job.name_ar or ""
+                s.last_card_name_en = ""
+                s.last_card_name_language = detect_name_language(s.last_card_name_used)
+                s.last_card_template_id = f"SQUARE:{job.template_id} | VERTICAL:{job.template_id_vertical}"
+                s.last_card_queue_name = job.queue_name or ""
+                s.last_card_queue_position = int(job.queue_position_at_submit or 0)
+                s.last_card_queue_entered_at = job.queue_entered_at or ""
+                s.last_card_processing_started_at = processing_started_at_str
+                s.last_card_issued_at = card_issued_at
+                s.last_card_queue_wait_sec = f"{queue_wait_sec:.2f}"
+                s.last_card_gen_sec = f"{gen_sec:.2f}"
+                s.last_card_total_sec = f"{total_sec:.2f}"
+                s.last_card_share_url = combined_share_urls
+                reset_session(s, keep_last_name=True)
+            return
+
         async with queue_sem:
             gen_started_at = time.time()
             if job.output_kind == "VERTICAL_SINGLE":
@@ -1889,13 +2148,16 @@ def infer_command(
     if raw in {
         "EDIT_AR", "EDIT_EN", "GEN", "GEN_SQUARE", "GEN_VERTICAL",
         "START_CARD", "START", "CONFIRM_NAME", "CANCEL",
-        "BACK_SIZE", "BACK_DESIGN", "CONFIRM_GEN", "ARABIA_VERTICAL_CARD", "CONFIRM_ARABIA_VERTICAL",
+        "BACK_OCCASION", "BACK_SIZE", "BACK_DESIGN", "CONFIRM_GEN", "ARABIA_VERTICAL_CARD", "CONFIRM_ARABIA_VERTICAL",
         "RATE_ARABIA_INFO",
         "RATE_ARABIA_1", "RATE_ARABIA_2", "RATE_ARABIA_3", "RATE_ARABIA_4", "RATE_ARABIA_5",
     }:
         return raw
 
     if raw.startswith("DESIGN_"):
+        return raw
+
+    if raw.startswith("OCCASION_"):
         return raw
 
     basic = normalize_cmd(raw)
@@ -1973,6 +2235,16 @@ def infer_command(
         if contains_any_phrase(raw, confirm_name_phrases):
             return "CONFIRM_NAME"
 
+    if state == STATE_CHOOSE_OCCASION and is_ar_only:
+        if contains_any_phrase(raw, cancel_phrases):
+            return "CANCEL"
+        if contains_any_phrase(raw, ["رمضان", "ramadan"]):
+            return "OCCASION_ramadan"
+        if contains_any_phrase(raw, ["عيد الفطر", "الفطر", "eid fitr", "fitr"]):
+            return "OCCASION_eid_fitr"
+        if contains_any_phrase(raw, ["عيد الاضحى", "عيد الأضحى", "الاضحى", "الأضحى", "eid adha", "adha"]):
+            return "OCCASION_eid_adha"
+
     if state == STATE_CONFIRM and (not is_ar_only):
         if contains_any_phrase(raw, cancel_phrases):
             return "CANCEL"
@@ -2005,6 +2277,8 @@ def infer_command(
             return "CANCEL"
         if contains_any_phrase(raw, edit_ar_phrases):
             return "EDIT_AR"
+        if contains_any_phrase(raw, ["تغيير المناسبة", "غير المناسبة", "change occasion", "occasion"]):
+            return "BACK_OCCASION"
         if supports_vertical and contains_any_phrase(raw, back_size_phrases):
             return "BACK_SIZE"
         if design_count > 1 and contains_any_phrase(raw, back_design_phrases):
@@ -2026,12 +2300,33 @@ def infer_command(
 # ---------------------------
 # Template picking
 # ---------------------------
-def pick_template_id(bot: Dict[str, Any], size_key: str, design_idx_1based: int) -> str:
+def pick_template_id(bot: Dict[str, Any], size_key: str, design_idx_1based: int, occasion_key: str = "") -> str:
     design_count = int(bot.get("design_count") or 1)
     supports_vertical = bool(bot.get("supports_vertical"))
 
     if size_key == "VERTICAL" and not supports_vertical:
         size_key = "SQUARE"
+
+    if bool(bot.get("requires_occasion")):
+        if not occasion_key:
+            raise RuntimeError("Occasion is required")
+        occasion_templates = (bot.get("occasion_templates") or {}).get(occasion_key) or {}
+        field = occasion_templates.get(size_key)
+
+        if design_count <= 1 or bool(bot.get("auto_issue_both_sizes")):
+            tid = (str(field) or "").strip()
+            if not tid:
+                raise RuntimeError(f"Template id is empty for occasion={occasion_key}, size={size_key}")
+            return tid
+
+        if not isinstance(field, list):
+            raise RuntimeError(f"Template list is not configured for occasion={occasion_key}, size={size_key}")
+        if design_idx_1based < 1 or design_idx_1based > len(field):
+            raise RuntimeError("Design index out of range")
+        tid = (field[design_idx_1based - 1] or "").strip()
+        if not tid:
+            raise RuntimeError(f"Template id is empty for occasion={occasion_key}, size={size_key}, design={design_idx_1based}")
+        return tid
 
     field = bot["template_square"] if size_key == "SQUARE" else bot["template_vertical"]
 
@@ -2068,6 +2363,8 @@ async def handle_webhook(req: Request, bot_key: str):
         is_ar_only = (lang_mode == "AR_ONLY")
         supports_vertical = bool(bot.get("supports_vertical"))
         design_count = int(bot.get("design_count") or 1)
+        requires_occasion = bool(bot.get("requires_occasion"))
+        auto_issue_both_sizes = bool(bot.get("auto_issue_both_sizes"))
         queue_name = get_queue_name_for_bot(bot_key)
         job_queue = get_queue_for_bot(bot_key)
 
@@ -2279,6 +2576,7 @@ async def handle_webhook(req: Request, bot_key: str):
                 s.name_en = ""
                 s.chosen_size = ""
                 s.chosen_design = 1
+                s.chosen_occasion = ""
 
             if not is_ar_only:
                 await atg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
@@ -2457,13 +2755,21 @@ async def handle_webhook(req: Request, bot_key: str):
 
             if cmd == "CONFIRM_NAME":
                 async with s.lock:
-                    s.state = STATE_CHOOSE_SIZE
-                await atg_send_message(
-                    bot_token,
-                    s.chat_id,
-                    hz_msg_choose_size(supports_vertical),
-                    hz_kb_choose_size(supports_vertical),
-                )
+                    s.state = STATE_CHOOSE_OCCASION if requires_occasion else STATE_CHOOSE_SIZE
+                if requires_occasion:
+                    await atg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        hz_msg_choose_occasion(),
+                        hz_kb_choose_occasion(),
+                    )
+                else:
+                    await atg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        hz_msg_choose_size(supports_vertical),
+                        hz_kb_choose_size(supports_vertical),
+                    )
                 return {"ok": True}
 
             await atg_send_message(bot_token, s.chat_id, hz_msg_review_name(name_ar_now), hz_kb_review_name())
@@ -2558,6 +2864,67 @@ async def handle_webhook(req: Request, bot_key: str):
             state_now = s.state
             name_ar_now = s.name_ar
 
+        if state_now == STATE_CHOOSE_OCCASION and is_ar_only and requires_occasion:
+            if cmd.startswith("OCCASION_"):
+                chosen_occasion = cmd.replace("OCCASION_", "", 1)
+                if chosen_occasion not in OCCASIONS:
+                    await atg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        hz_msg_choose_occasion(),
+                        hz_kb_choose_occasion(),
+                    )
+                    return {"ok": True}
+
+                async with s.lock:
+                    s.chosen_occasion = chosen_occasion
+
+                    if auto_issue_both_sizes:
+                        s.chosen_size = "BOTH"
+                        s.chosen_design = 1
+                        s.state = STATE_PREVIEW_AR
+                    else:
+                        s.chosen_size = ""
+                        s.chosen_design = 1
+                        s.state = STATE_CHOOSE_SIZE
+
+                if auto_issue_both_sizes:
+                    await atg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        hz_msg_preview_occurrence(
+                            bot_key,
+                            name_ar_now,
+                            chosen_occasion,
+                            "مربع + طولي",
+                            1,
+                            both_sizes=True,
+                        ),
+                        kb_preview_ar(
+                            supports_vertical,
+                            design_count,
+                            show_occasion=True,
+                            show_size=False,
+                            show_design=False,
+                        ),
+                    )
+                else:
+                    await atg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        hz_msg_choose_size(supports_vertical),
+                        hz_kb_choose_size(supports_vertical),
+                    )
+                return {"ok": True}
+
+            await atg_send_message(
+                bot_token,
+                s.chat_id,
+                hz_msg_choose_occasion(),
+                hz_kb_choose_occasion(),
+            )
+            return {"ok": True}
+
         if state_now == STATE_CHOOSE_SIZE and is_ar_only:
             if cmd == "GEN_SQUARE":
                 async with s.lock:
@@ -2589,8 +2956,8 @@ async def handle_webhook(req: Request, bot_key: str):
                     await atg_send_message(
                         bot_token,
                         s.chat_id,
-                        hz_msg_preview(bot_key, name_ar_now, size_label_ar(chosen_size_now), 1),
-                        kb_preview_ar(supports_vertical, design_count),
+                        hz_msg_preview_occurrence(bot_key, name_ar_now, s.chosen_occasion, size_label_ar(chosen_size_now), 1) if requires_occasion else hz_msg_preview(bot_key, name_ar_now, size_label_ar(chosen_size_now), 1),
+                        kb_preview_ar(supports_vertical, design_count, show_occasion=requires_occasion),
                     )
                 return {"ok": True}
 
@@ -2624,8 +2991,8 @@ async def handle_webhook(req: Request, bot_key: str):
                     await atg_send_message(
                         bot_token,
                         s.chat_id,
-                        hz_msg_preview(bot_key, name_ar_now, size_label_ar(chosen_size_now), 1),
-                        kb_preview_ar(supports_vertical, design_count),
+                        hz_msg_preview_occurrence(bot_key, name_ar_now, s.chosen_occasion, size_label_ar(chosen_size_now), 1) if requires_occasion else hz_msg_preview(bot_key, name_ar_now, size_label_ar(chosen_size_now), 1),
+                        kb_preview_ar(supports_vertical, design_count, show_occasion=requires_occasion),
                     )
                 return {"ok": True}
 
@@ -2663,8 +3030,8 @@ async def handle_webhook(req: Request, bot_key: str):
                     await atg_send_message(
                         bot_token,
                         s.chat_id,
-                        hz_msg_preview(bot_key, name_ar_now, size_label_ar(size_key), idx),
-                        kb_preview_ar(supports_vertical, design_count),
+                        hz_msg_preview_occurrence(bot_key, name_ar_now, s.chosen_occasion, size_label_ar(size_key), idx) if requires_occasion else hz_msg_preview(bot_key, name_ar_now, size_label_ar(size_key), idx),
+                        kb_preview_ar(supports_vertical, design_count, show_occasion=requires_occasion),
                     )
                     return {"ok": True}
 
@@ -2684,9 +3051,23 @@ async def handle_webhook(req: Request, bot_key: str):
             name_ar_now = s.name_ar
             chosen_size_now = s.chosen_size or "SQUARE"
             chosen_design_now = s.chosen_design or 1
+            chosen_occasion_now = s.chosen_occasion or ""
             seq_now = s.seq
 
         if state_now == STATE_PREVIEW_AR and is_ar_only:
+            if cmd == "BACK_OCCASION" and requires_occasion:
+                async with s.lock:
+                    s.state = STATE_CHOOSE_OCCASION
+                    s.chosen_size = ""
+                    s.chosen_design = 1
+                await atg_send_message(
+                    bot_token,
+                    s.chat_id,
+                    hz_msg_choose_occasion(),
+                    hz_kb_choose_occasion(),
+                )
+                return {"ok": True}
+
             if cmd == "BACK_SIZE" and supports_vertical:
                 async with s.lock:
                     s.state = STATE_CHOOSE_SIZE
@@ -2741,7 +3122,16 @@ async def handle_webhook(req: Request, bot_key: str):
 
                 asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, seq_now))
 
-                template_id = pick_template_id(bot, chosen_size_now, chosen_design_now)
+                if auto_issue_both_sizes:
+                    template_id = pick_template_id(bot, "SQUARE", 1, chosen_occasion_now)
+                    template_id_vertical = pick_template_id(bot, "VERTICAL", 1, chosen_occasion_now)
+                    size_for_job = "BOTH"
+                    output_kind_for_job = "BOTH_KOUNUZ"
+                else:
+                    template_id = pick_template_id(bot, chosen_size_now, chosen_design_now, chosen_occasion_now if requires_occasion else "")
+                    template_id_vertical = ""
+                    size_for_job = chosen_size_now
+                    output_kind_for_job = chosen_size_now
 
                 try:
                     job_queue.put_nowait(
@@ -2752,7 +3142,7 @@ async def handle_webhook(req: Request, bot_key: str):
                             username=s.username,
                             name_ar=name_ar_now,
                             name_en="",
-                            size_key=chosen_size_now,
+                            size_key=size_for_job,
                             design_number=int(chosen_design_now),
                             template_id=template_id,
                             requested_at=time.time(),
@@ -2760,6 +3150,10 @@ async def handle_webhook(req: Request, bot_key: str):
                             queue_name=queue_name,
                             queue_entered_at=now_ts_riyadh(),
                             queue_position_at_submit=job_queue.qsize() + 1,
+                            output_kind=output_kind_for_job,
+                            occasion_key=chosen_occasion_now,
+                            occasion_label=occasion_label(chosen_occasion_now),
+                            template_id_vertical=template_id_vertical,
                         )
                     )
                 except asyncio.QueueFull:
@@ -2778,8 +3172,8 @@ async def handle_webhook(req: Request, bot_key: str):
             await atg_send_message(
                 bot_token,
                 s.chat_id,
-                hz_msg_preview(bot_key, name_ar_now, size_label_ar(chosen_size_now), chosen_design_now),
-                kb_preview_ar(supports_vertical, design_count),
+                hz_msg_preview_occurrence(bot_key, name_ar_now, s.chosen_occasion, size_label_ar(chosen_size_now), chosen_design_now, both_sizes=(chosen_size_now == "BOTH")) if requires_occasion else hz_msg_preview(bot_key, name_ar_now, size_label_ar(chosen_size_now), chosen_design_now),
+                kb_preview_ar(supports_vertical, design_count, show_occasion=requires_occasion, show_size=(chosen_size_now != "BOTH"), show_design=(design_count > 1 and chosen_size_now != "BOTH")),
             )
             return {"ok": True}
 
