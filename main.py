@@ -147,9 +147,46 @@ TEMPLATE_SLIDES_ID_AMRO_VERTICAL_1 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL
 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2", "").strip()
 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3", "").strip()
 
-# preview images via Telegram file_id
+# preview images via Telegram file_id or direct image URL
+# Legacy fallback previews
 AMRO_PREVIEW_SQUARE = os.getenv("AMRO_PREVIEW_SQUARE", "").strip()
 AMRO_PREVIEW_VERTICAL = os.getenv("AMRO_PREVIEW_VERTICAL", "").strip()
+
+# Occasion-specific AMRO preview images
+AMRO_PREVIEW_RAMADAN_SQUARE = os.getenv("AMRO_PREVIEW_RAMADAN_SQUARE", "").strip()
+AMRO_PREVIEW_RAMADAN_VERTICAL = os.getenv("AMRO_PREVIEW_RAMADAN_VERTICAL", "").strip()
+AMRO_PREVIEW_FITR_SQUARE = os.getenv("AMRO_PREVIEW_FITR_SQUARE", "").strip()
+AMRO_PREVIEW_FITR_VERTICAL = os.getenv("AMRO_PREVIEW_FITR_VERTICAL", "").strip()
+AMRO_PREVIEW_ADHA_SQUARE = os.getenv("AMRO_PREVIEW_ADHA_SQUARE", "").strip()
+AMRO_PREVIEW_ADHA_VERTICAL = os.getenv("AMRO_PREVIEW_ADHA_VERTICAL", "").strip()
+
+
+def get_amro_preview_image(occasion_key: str, size_key: str) -> str:
+    previews = {
+        "ramadan": {
+            "SQUARE": AMRO_PREVIEW_RAMADAN_SQUARE,
+            "VERTICAL": AMRO_PREVIEW_RAMADAN_VERTICAL,
+        },
+        "eid_fitr": {
+            "SQUARE": AMRO_PREVIEW_FITR_SQUARE,
+            "VERTICAL": AMRO_PREVIEW_FITR_VERTICAL,
+        },
+        "eid_adha": {
+            "SQUARE": AMRO_PREVIEW_ADHA_SQUARE,
+            "VERTICAL": AMRO_PREVIEW_ADHA_VERTICAL,
+        },
+    }
+
+    image = previews.get(occasion_key or "", {}).get(size_key or "", "")
+    if image:
+        return image
+
+    # Fallback to old global preview variables if occasion-specific variables are empty
+    if size_key == "SQUARE":
+        return AMRO_PREVIEW_SQUARE
+    if size_key == "VERTICAL":
+        return AMRO_PREVIEW_VERTICAL
+    return ""
 
 # ---------------------------
 # Occasions / Templates for Amro + Kounuz Alward
@@ -166,32 +203,32 @@ def _env_list(prefix: str, count: int = 6) -> List[str]:
 
 AMRO_OCCASION_TEMPLATES = {
     "ramadan": {
-        "SQUARE": _env_list("AMRO_RAMADAN_SQ", 6),
-        "VERTICAL": _env_list("AMRO_RAMADAN_V", 6),
+        "SQUARE": _env_list("TEMPLATE_SLIDES_ID_AMRO_RAMADAN_SQUARE", 6),
+        "VERTICAL": _env_list("TEMPLATE_SLIDES_ID_AMRO_RAMADAN_VERTICAL", 6),
     },
     "eid_fitr": {
-        "SQUARE": _env_list("AMRO_FITR_SQ", 6),
-        "VERTICAL": _env_list("AMRO_FITR_V", 6),
+        "SQUARE": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_FITR_SQUARE", 6),
+        "VERTICAL": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_FITR_VERTICAL", 6),
     },
     "eid_adha": {
-        "SQUARE": _env_list("AMRO_ADHA_SQ", 6),
-        "VERTICAL": _env_list("AMRO_ADHA_V", 6),
+        "SQUARE": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_ADHA_SQUARE", 6),
+        "VERTICAL": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_ADHA_VERTICAL", 6),
     },
 }
 
 # Kounuz Alward: 1 square + 1 vertical template for each occasion
 KOUNUZ_OCCASION_TEMPLATES = {
     "ramadan": {
-        "SQUARE": os.getenv("KOUNUZ_RAMADAN_SQ", "").strip(),
-        "VERTICAL": os.getenv("KOUNUZ_RAMADAN_V", "").strip(),
+        "SQUARE": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_RAMADAN_SQUARE", "").strip(),
+        "VERTICAL": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_RAMADAN_VERTICAL", "").strip(),
     },
     "eid_fitr": {
-        "SQUARE": os.getenv("KOUNUZ_FITR_SQ", "").strip(),
-        "VERTICAL": os.getenv("KOUNUZ_FITR_V", "").strip(),
+        "SQUARE": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_FITR_SQUARE", "").strip(),
+        "VERTICAL": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_FITR_VERTICAL", "").strip(),
     },
     "eid_adha": {
-        "SQUARE": os.getenv("KOUNUZ_ADHA_SQ", "").strip(),
-        "VERTICAL": os.getenv("KOUNUZ_ADHA_V", "").strip(),
+        "SQUARE": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_ADHA_SQUARE", "").strip(),
+        "VERTICAL": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_ADHA_VERTICAL", "").strip(),
     },
 }
 
@@ -2938,13 +2975,15 @@ async def handle_webhook(req: Request, bot_key: str):
                         s.state = STATE_PREVIEW_AR
 
                 if design_count > 1:
-                    if bot_key == "amro" and AMRO_PREVIEW_SQUARE:
-                        await atg_send_photo_by_file_id(
-                            bot_token,
-                            s.chat_id,
-                            AMRO_PREVIEW_SQUARE,
-                            "نماذج التصاميم للمقاس المربع"
-                        )
+                    if bot_key == "amro":
+                        amro_preview_image = get_amro_preview_image(s.chosen_occasion, "SQUARE")
+                        if amro_preview_image:
+                            await atg_send_photo_by_file_id(
+                                bot_token,
+                                s.chat_id,
+                                amro_preview_image,
+                                "نماذج التصاميم للمقاس المربع"
+                            )
 
                     await atg_send_message(
                         bot_token,
@@ -2973,13 +3012,15 @@ async def handle_webhook(req: Request, bot_key: str):
                         s.state = STATE_PREVIEW_AR
 
                 if design_count > 1:
-                    if bot_key == "amro" and AMRO_PREVIEW_VERTICAL:
-                        await atg_send_photo_by_file_id(
-                            bot_token,
-                            s.chat_id,
-                            AMRO_PREVIEW_VERTICAL,
-                            "نماذج التصاميم للمقاس الطولي"
-                        )
+                    if bot_key == "amro":
+                        amro_preview_image = get_amro_preview_image(s.chosen_occasion, "VERTICAL")
+                        if amro_preview_image:
+                            await atg_send_photo_by_file_id(
+                                bot_token,
+                                s.chat_id,
+                                amro_preview_image,
+                                "نماذج التصاميم للمقاس الطولي"
+                            )
 
                     await atg_send_message(
                         bot_token,
