@@ -1187,7 +1187,7 @@ def hz_msg_preview(bot_key: str, name_ar: str, size_label: str, design_number: i
 
 
 def hz_msg_creating() -> str:
-    return "جاري إنشاء البطاقة..."
+    return "جاري إصدار البطاقة..."
 
 
 def hz_msg_still_working() -> str:
