@@ -203,32 +203,32 @@ def _env_list(prefix: str, count: int = 6) -> List[str]:
 
 AMRO_OCCASION_TEMPLATES = {
     "ramadan": {
-        "SQUARE": _env_list("TEMPLATE_SLIDES_ID_AMRO_RAMADAN_SQUARE", 6),
-        "VERTICAL": _env_list("TEMPLATE_SLIDES_ID_AMRO_RAMADAN_VERTICAL", 6),
+        "SQUARE": _env_list("AMRO_RAMADAN_SQ", 6),
+        "VERTICAL": _env_list("AMRO_RAMADAN_V", 6),
     },
     "eid_fitr": {
-        "SQUARE": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_FITR_SQUARE", 6),
-        "VERTICAL": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_FITR_VERTICAL", 6),
+        "SQUARE": _env_list("AMRO_FITR_SQ", 6),
+        "VERTICAL": _env_list("AMRO_FITR_V", 6),
     },
     "eid_adha": {
-        "SQUARE": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_ADHA_SQUARE", 6),
-        "VERTICAL": _env_list("TEMPLATE_SLIDES_ID_AMRO_EID_ADHA_VERTICAL", 6),
+        "SQUARE": _env_list("AMRO_ADHA_SQ", 6),
+        "VERTICAL": _env_list("AMRO_ADHA_V", 6),
     },
 }
 
 # Kounuz Alward: 1 square + 1 vertical template for each occasion
 KOUNUZ_OCCASION_TEMPLATES = {
     "ramadan": {
-        "SQUARE": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_RAMADAN_SQUARE", "").strip(),
-        "VERTICAL": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_RAMADAN_VERTICAL", "").strip(),
+        "SQUARE": os.getenv("KOUNUZ_RAMADAN_SQ", "").strip(),
+        "VERTICAL": os.getenv("KOUNUZ_RAMADAN_V", "").strip(),
     },
     "eid_fitr": {
-        "SQUARE": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_FITR_SQUARE", "").strip(),
-        "VERTICAL": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_FITR_VERTICAL", "").strip(),
+        "SQUARE": os.getenv("KOUNUZ_FITR_SQ", "").strip(),
+        "VERTICAL": os.getenv("KOUNUZ_FITR_V", "").strip(),
     },
     "eid_adha": {
-        "SQUARE": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_ADHA_SQUARE", "").strip(),
-        "VERTICAL": os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_EID_ADHA_VERTICAL", "").strip(),
+        "SQUARE": os.getenv("KOUNUZ_ADHA_SQ", "").strip(),
+        "VERTICAL": os.getenv("KOUNUZ_ADHA_V", "").strip(),
     },
 }
 
