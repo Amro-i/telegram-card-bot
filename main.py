@@ -1233,9 +1233,8 @@ def hz_kb_choose_size(supports_vertical: bool) -> dict:
 def kb_choose_design(size_key: str, design_count: int) -> dict:
     s_prefix = "S" if size_key == "SQUARE" else "V"
     count = max(1, design_count)
-    arabic_digits = str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩")
     buttons = [
-        {"text": str(i).translate(arabic_digits), "callback_data": f"DESIGN_{s_prefix}_{i}"}
+        {"text": str(i), "callback_data": f"DESIGN_{s_prefix}_{i}"}
         for i in range(1, count + 1)
     ]
 
