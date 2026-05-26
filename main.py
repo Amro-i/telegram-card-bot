@@ -1232,9 +1232,18 @@ def hz_kb_choose_size(supports_vertical: bool) -> dict:
 
 def kb_choose_design(size_key: str, design_count: int) -> dict:
     s_prefix = "S" if size_key == "SQUARE" else "V"
-    rows = []
-    for i in range(1, max(1, design_count) + 1):
-        rows.append([{"text": f"{i}", "callback_data": f"DESIGN_{s_prefix}_{i}"}])
+    count = max(1, design_count)
+    buttons = [
+        {"text": f"{i}", "callback_data": f"DESIGN_{s_prefix}_{i}"}
+        for i in range(1, count + 1)
+    ]
+
+    # Arrange design number buttons in two rows instead of stacking each number vertically.
+    split_at = (count + 1) // 2
+    rows = [buttons[:split_at]]
+    if buttons[split_at:]:
+        rows.append(buttons[split_at:])
+
     return {"inline_keyboard": rows}
 
 
