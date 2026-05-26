@@ -100,7 +100,7 @@ SHEET_TAB = os.getenv("SHEET_TAB", "Tracking").strip()
 # M  Size Key / كود المقاس
 # N  Output Kind / نوع الإخراج
 # O  Is Square / هل هي مربعة
-# P  Is Story Vertical / هل هي ستوري/طولية
+# P  Is Story Vertical / هل هي ستوري/مستطيلة
 # Q  Card Sequence / ترتيب البطاقة
 # R  Design / التصميم
 # S  Template ID / رقم قالب التصميم
@@ -699,7 +699,7 @@ def kb_after_ready_with_share(is_ar_only: bool, webapp_url: str) -> dict:
 def ar_kb_after_square_ready_with_share(webapp_url: str) -> dict:
     rows = [
         [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
-        [{"text": "مقاس طولي / Vertical Size", "callback_data": "ARABIA_VERTICAL_CARD"}],
+        [{"text": "مقاس مستطيل / Vertical Size", "callback_data": "ARABIA_VERTICAL_CARD"}],
         [{"text": "بطاقة جديدة / New Card", "callback_data": "START_CARD"}],
         [{"text": "↩️ البداية / Start", "callback_data": "START"}],
     ]
@@ -710,7 +710,7 @@ def ar_kb_after_square_ready_with_share(webapp_url: str) -> dict:
 def ar_kb_after_vertical_ready_with_share(webapp_url: str) -> dict:
     rows = [
         [{"text": "📤 مشاركة / Share", "web_app": {"url": webapp_url}}],
-        [{"text": "مقاس طولي / Vertical Size", "callback_data": "ARABIA_VERTICAL_CARD"}],
+        [{"text": "مقاس مستطيل / Vertical Size", "callback_data": "ARABIA_VERTICAL_CARD"}],
         [{"text": "مقاس مربع / Square Size", "callback_data": "START_CARD"}],
         [{"text": "↩️ البداية / Start", "callback_data": "START"}],
     ]
@@ -1151,7 +1151,7 @@ def hz_msg_preview_occurrence(bot_key: str, name_ar: str, occasion_key: str, siz
         f"المناسبة: {occasion_label(occasion_key)}\n"
     )
     if both_sizes:
-        base += "سيتم إصدار: مربع + طولي\n"
+        base += "سيتم إصدار: مربع + مستطيل\n"
     else:
         base += f"المقاس: {size_label}\n"
         if bot_key == "amro":
@@ -1224,7 +1224,7 @@ def hz_kb_choose_size(supports_vertical: bool) -> dict:
         return {
             "inline_keyboard": [
                 [{"text": "مربع", "callback_data": "GEN_SQUARE"}],
-                [{"text": "طولي", "callback_data": "GEN_VERTICAL"}],
+                [{"text": "مستطيل", "callback_data": "GEN_VERTICAL"}],
             ]
         }
     return {"inline_keyboard": [[{"text": "مربع", "callback_data": "GEN_SQUARE"}]]}
@@ -1243,8 +1243,6 @@ def kb_preview_ar(supports_vertical: bool, design_count: int, *, show_occasion: 
         [{"text": "✅ تأكيد الإصدار", "callback_data": "CONFIRM_GEN"}],
         [{"text": "تعديل الاسم", "callback_data": "EDIT_AR"}],
     ]
-    if show_occasion:
-        rows.append([{"text": "تغيير المناسبة", "callback_data": "BACK_OCCASION"}])
     if supports_vertical and show_size:
         rows.append([{"text": "تغيير المقاس", "callback_data": "BACK_SIZE"}])
     if design_count > 1 and show_design:
@@ -1473,7 +1471,7 @@ def size_label_ar(size_key: str) -> str:
     if size_key == "SQUARE":
         return "مربع / Square"
     if size_key == "VERTICAL":
-        return "ستوري طولي / Story Vertical"
+        return "ستوري مستطيل / Story Vertical"
     return str(size_key or "")
 
 
@@ -1494,26 +1492,26 @@ def card_category(size_key: str) -> str:
     if size_key == "VERTICAL":
         return "ستوري / Story"
     if size_key == "BOTH":
-        return "مربع + طولي / Square + Vertical"
+        return "مربع + مستطيل / Square + Vertical"
     return str(size_key or "")
 
 
 def card_type_label(job: Job) -> str:
     occasion = f" - {job.occasion_label}" if getattr(job, "occasion_label", "") else ""
     if job.output_kind == "BOTH_KOUNUZ":
-        return "بطاقتان: مربع + طولي / Two Cards: Square + Vertical" + occasion
+        return "بطاقتان: مربع + مستطيل / Two Cards: Square + Vertical" + occasion
     if job.bot_key == "alarabia" and job.output_kind == "VERTICAL_SINGLE":
-        return "بطاقة ستوري طولية - اسم عربي أو إنجليزي / Story Vertical Card - Arabic or English Name"
+        return "بطاقة ستوري مستطيلة - اسم عربي أو إنجليزي / Story Vertical Card - Arabic or English Name"
     if job.size_key == "VERTICAL":
-        return "بطاقة ستوري طولية / Story Vertical Card" + occasion
+        return "بطاقة ستوري مستطيلة / Story Vertical Card" + occasion
     return "مقاس مربع / Square Size" + occasion
 
 
 def card_sequence_label(job: Job) -> str:
     if job.output_kind == "BOTH_KOUNUZ":
-        return "بطاقتان - مربع وطولي / Two Cards - Square and Vertical"
+        return "بطاقتان - مربع ومستطيل / Two Cards - Square and Vertical"
     if job.bot_key == "alarabia" and job.output_kind == "VERTICAL_SINGLE":
-        return "البطاقة الثانية - ستوري/طولي / Second Card - Story/Vertical"
+        return "البطاقة الثانية - ستوري/مستطيل / Second Card - Story/Vertical"
     return "البطاقة الأولى - مربعة / First Card - Square"
 
 
@@ -1669,7 +1667,7 @@ async def process_job(job: Job):
                 chat_id=job.chat_id,
                 user_id=job.user_id,
                 png_bytes=png_vertical,
-                caption="طولي",
+                caption="مستطيل",
             )
 
             card_issued_at = now_ts_riyadh()
@@ -2244,7 +2242,7 @@ def infer_command(
     ]
 
     vertical_phrases = [
-        "طولي", "طوليه", "طولية", "عمودي", "vertical", "portrait", "vertcal",
+        "مستطيل", "مستطيله", "مستطيلة", "طولي", "طوليه", "طولية", "عمودي", "vertical", "portrait", "vertcal",
     ]
 
     back_size_phrases = [
@@ -2314,8 +2312,6 @@ def infer_command(
             return "CANCEL"
         if contains_any_phrase(raw, edit_ar_phrases):
             return "EDIT_AR"
-        if contains_any_phrase(raw, ["تغيير المناسبة", "غير المناسبة", "change occasion", "occasion"]):
-            return "BACK_OCCASION"
         if supports_vertical and contains_any_phrase(raw, back_size_phrases):
             return "BACK_SIZE"
         if design_count > 1 and contains_any_phrase(raw, back_design_phrases):
@@ -2933,7 +2929,7 @@ async def handle_webhook(req: Request, bot_key: str):
                             bot_key,
                             name_ar_now,
                             chosen_occasion,
-                            "مربع + طولي",
+                            "مربع + مستطيل",
                             1,
                             both_sizes=True,
                         ),
@@ -3019,7 +3015,7 @@ async def handle_webhook(req: Request, bot_key: str):
                                 bot_token,
                                 s.chat_id,
                                 amro_preview_image,
-                                "نماذج التصاميم للمقاس الطولي"
+                                "نماذج التصاميم للمقاس المستطيل"
                             )
 
                     await atg_send_message(
@@ -3096,19 +3092,6 @@ async def handle_webhook(req: Request, bot_key: str):
             seq_now = s.seq
 
         if state_now == STATE_PREVIEW_AR and is_ar_only:
-            if cmd == "BACK_OCCASION" and requires_occasion:
-                async with s.lock:
-                    s.state = STATE_CHOOSE_OCCASION
-                    s.chosen_size = ""
-                    s.chosen_design = 1
-                await atg_send_message(
-                    bot_token,
-                    s.chat_id,
-                    hz_msg_choose_occasion(),
-                    hz_kb_choose_occasion(),
-                )
-                return {"ok": True}
-
             if cmd == "BACK_SIZE" and supports_vertical:
                 async with s.lock:
                     s.state = STATE_CHOOSE_SIZE
