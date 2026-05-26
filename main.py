@@ -1163,9 +1163,9 @@ def hz_msg_preview_occurrence(bot_key: str, name_ar: str, occasion_key: str, siz
 def hz_kb_choose_occasion() -> dict:
     return {
         "inline_keyboard": [
+            [{"text": "عيد الأضحى", "callback_data": "OCCASION_eid_adha"}],
             [{"text": "رمضان", "callback_data": "OCCASION_ramadan"}],
             [{"text": "عيد الفطر", "callback_data": "OCCASION_eid_fitr"}],
-            [{"text": "عيد الأضحى", "callback_data": "OCCASION_eid_adha"}],
         ]
     }
 
